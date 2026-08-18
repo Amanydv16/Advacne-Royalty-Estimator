@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Advance Royalty Calculator & Valuation Engine</title>
+  <!-- Google Fonts: Inter & Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Chart.js for beautiful interactive analytics -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="styles.css?v=3.0">
+</head>
+
+<body class="dark-theme">
+  <div class="app-layout">
+
+    <!-- LEFT SIDEBAR -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand-logo-monetunes">
+          <img src="monetunes-logo.png" alt="monetunes" class="monetunes-brand-img">
+        </div>
+      </div>
+
+      <!-- Current Artist Profile Widget -->
+      <div class="artist-sidebar-card" id="sidebarArtistCard">
+        <img id="sidebarArtistImg"
+          src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100&h=100&fit=crop" alt="Artist"
+          class="artist-thumb">
+        <div class="artist-info">
+          <div class="artist-name" id="sidebarArtistName">Select an Artist</div>
+          <div class="artist-meta" id="sidebarArtistMeta">Live Spotify Search</div>
+        </div>
+        <button class="icon-btn-ghost" title="Switch Artist" onclick="goToStage(1)"><i
+            data-lucide="chevron-down"></i></button>
+      </div>
+
+      <!-- Original Navigation Links -->
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" onclick="goToStage(1); return false;">
+          <i data-lucide="wallet"></i> <span>Get Funding</span>
+        </a>
+        <a href="#" class="nav-item" onclick="goToStage(1); return false;">
+          <i data-lucide="layout-dashboard"></i> <span>Dashboard</span>
+        </a>
+        <a href="#" class="nav-item" onclick="alert('User Permissions Manager'); return false;">
+          <i data-lucide="users"></i> <span>User Permissions</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <a href="#" class="nav-item-sub"><i data-lucide="mail"></i> <span>Contact Us</span></a>
+        <a href="#" class="nav-item-sub"><i data-lucide="help-circle"></i> <span>Knowledge Center</span></a>
+        <a href="#" class="nav-item-sub"><i data-lucide="settings"></i> <span>Settings</span></a>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT AREA -->
+    <main class="main-content">
+
+      <!-- TOP NAV WIZARD BAR -->
+      <header class="top-nav-bar">
+        <div class="wizard-steps">
+          <div class="wizard-step active" id="stepIndicator1" onclick="goToStage(1)">
+            <span class="step-num">1</span> <span class="step-label">NEW DEAL</span>
+          </div>
+          <div class="wizard-step" id="stepIndicator2" onclick="if(state.selectedArtist) goToStage(3)">
+            <span class="step-num">2</span> <span class="step-label">VIEW QUOTES</span>
+          </div>
+          <div class="wizard-step" id="stepIndicator3" onclick="if(state.selectedArtist) goToStage(4)">
+            <span class="step-num">3</span> <span class="step-label">UPLOAD REPORTS</span>
+          </div>
+          <div class="wizard-step" id="stepIndicator4" onclick="if(state.hasUploadedValidData) goToStage(5)">
+            <span class="step-num">4</span> <span class="step-label">EXACT ADVANCE</span>
+          </div>
+        </div>
+        <div class="top-user-actions">
+          <span class="badge-env">MONETUNES ENGINE v2.0</span>
+        </div>
+      </header>
+
+      <!-- VIEW CONTAINER -->
+      <div class="stage-viewport">
+
+        <!-- ================= STAGE 1: ADD A NEW DEAL ================= -->
+        <section id="stage1" class="stage-section active">
+          <div class="modal-card stage-card-center animate-fade-in">
+            <h1 class="card-title">ADD A <span class="text-gradient">NEW DEAL</span></h1>
+            <p class="card-subtitle">Are you looking to start with an artist or a label?</p>
+
+            <div class="toggle-pill-group">
+              <button class="pill-btn active" id="typeArtistBtn" onclick="selectEntityType('artist')">ARTIST</button>
+              <button class="pill-btn" id="typeLabelBtn" onclick="selectEntityType('label')">LABEL</button>
+            </div>
+
+            <div class="form-group search-form-group">
+              <label class="form-label" id="entitySearchLabel">Artist Name</label>
+              <div class="search-input-wrapper">
+                <div class="selected-artist-chip" id="selectedArtistChip" style="display: none;">
+                  <img id="chipArtistImg" src="" alt="">
+                  <span id="chipArtistName"></span>
+                  <button class="chip-clear-btn" onclick="clearArtistSelection()"><i data-lucide="x"></i></button>
+                </div>
+                <input type="text" id="artistSearchInput" class="text-input" placeholder="Type artist name"
+                  oninput="handleArtistSearch(this.value)" autocomplete="off">
+                <button type="button" id="searchClearBtn" class="input-clear-btn" style="display: none;"
+                  onclick="clearSearchInput()"><i data-lucide="x"></i></button>
+                <i data-lucide="search" class="search-icon" id="searchIcon"></i>
+              </div>
+
+              <!-- Spotify Search Results Dropdown -->
+              <div class="search-dropdown" id="spotifySearchResults" style="display: none;"></div>
+
+              <div class="form-helper-row" id="spotifyIdHelperRow">
+                <a href="#" class="link-secondary" onclick="toggleSpotifyIdModal(); return false;">Use Spotify ID
+                  Instead</a>
+              </div>
+            </div>
+
+
+            <button class="btn-primary-purple btn-large" id="stage1NextBtn" onclick="handleStage1Proceed()">
+              <span>GET STARTED</span> <i data-lucide="arrow-right"></i>
+            </button>
+          </div>
+        </section>
+
+
+
+
+
+        <!-- ================= STAGE 2: GET FUNDING (MONTHLY REVENUE) ================= -->
+        <section id="stage2" class="stage-section">
+          <div class="modal-card stage-card-center animate-fade-in">
+            <h1 class="card-title">GET <span class="text-gradient">FUNDING</span></h1>
+
+            <div class="form-group revenue-input-group">
+              <label class="form-label">
+                How much streaming income did this artist receive last month?
+                <span class="tooltip-icon"
+                  title="Declared last-month streaming earnings across all digital stores. Verified against statements in Step 3."><i
+                    data-lucide="help-circle"></i></span>
+              </label>
+
+              <div class="currency-input-wrapper">
+                <span class="currency-symbol">$</span>
+                <input type="number" id="declaredMonthlyRevInput" class="currency-input" value="3400" min="0" step="100"
+                  placeholder="0.00" oninput="updateEstimateCalculations()">
+              </div>
+            </div>
+
+            <button class="btn-primary-purple btn-large" onclick="goToStage(3)">
+              <span>GET STARTED</span> <i data-lucide="arrow-right"></i>
+            </button>
+          </div>
+        </section>
+
+
+        <!-- ================= STAGE 3: VIEW QUOTES (DEAL DETAILS & ESTIMATOR) ================= -->
+        <section id="stage3" class="stage-section">
+          <div class="deal-estimator-container animate-fade-in">
+
+            <!-- Left Side: Deal Details Controls -->
+            <div class="glass-panel deal-details-panel">
+              <div class="panel-header-row">
+                <h2 class="panel-heading">Deal <span class="text-gradient">Details</span></h2>
+                <button class="btn-text-ghost" onclick="toggleSongwritingModal()">
+                  <i data-lucide="plus-circle"></i> ADD SONG WRITING
+                </button>
+              </div>
+
+              <!-- Rights Included -->
+              <div class="deal-option-block">
+                <label class="deal-option-label">
+                  Rights Included
+                  <span class="tooltip-icon"
+                    title="Sound recording rights are empirically calibrated. Songwriting triggers out-of-scope flag."><i
+                      data-lucide="help-circle"></i></span>
+                </label>
+                <div class="segment-button-group">
+                  <button class="segment-btn active" data-scope="sound_recording"
+                    onclick="selectRightsScope('sound_recording', this)">SOUND RECORDING</button>
+                  <button class="segment-btn" data-scope="songwriting"
+                    onclick="selectRightsScope('songwriting', this)">SONG WRITING</button>
+                  <button class="segment-btn" data-scope="both" onclick="selectRightsScope('both', this)">BOTH</button>
+                </div>
+              </div>
+
+              <!-- Term Length -->
+              <div class="deal-option-block">
+                <label class="deal-option-label">
+                  Term Length
+                  <span class="tooltip-icon" title="Supported contract duration (1, 2, 3, 5, or 8 years)."><i
+                      data-lucide="help-circle"></i></span>
+                </label>
+                <div class="segment-button-group" id="termButtonGroup">
+                  <button class="segment-btn" data-term="1" onclick="selectTerm(1, this)">1 YEAR</button>
+                  <button class="segment-btn" data-term="2" onclick="selectTerm(2, this)">2 YEARS</button>
+                  <button class="segment-btn active" data-term="3" onclick="selectTerm(3, this)">3 YEARS</button>
+                  <button class="segment-btn" data-term="5" onclick="selectTerm(5, this)">5 YEARS</button>
+                  <button class="segment-btn" data-term="8" onclick="selectTerm(8, this)">8 YEARS</button>
+                </div>
+              </div>
+
+              <!-- Pay-Through % -->
+              <div class="deal-option-block">
+                <label class="deal-option-label">
+                  Percent of Income Paid Through Before Recoupment
+                  <span class="tooltip-icon"
+                    title="Share of royalty income routed directly to the artist during recoupment."><i
+                      data-lucide="help-circle"></i></span>
+                </label>
+                <div class="segment-button-group" id="payThroughButtonGroup">
+                  <button class="segment-btn active" data-pt="0" onclick="selectPayThrough(0, this)">0%</button>
+                  <button class="segment-btn" data-pt="10" onclick="selectPayThrough(10, this)">10%</button>
+                  <button class="segment-btn" data-pt="20" onclick="selectPayThrough(20, this)">20%</button>
+                  <button class="segment-btn" data-pt="30" onclick="selectPayThrough(30, this)">30%</button>
+                  <button class="segment-btn" data-pt="40" onclick="selectPayThrough(40, this)">40%</button>
+                  <button class="segment-btn" data-pt="50" onclick="selectPayThrough(50, this)">50%</button>
+                </div>
+              </div>
+
+              <!-- Post-recoupment share slider -->
+              <div class="deal-option-block">
+                <div class="slider-header-row">
+                  <label class="deal-option-label">Post-Recoupment Artist Share ($e$)</label>
+                  <span class="slider-badge" id="postRecoupValBadge">100% (ends at recoupment)</span>
+                </div>
+                <input type="range" id="postRecoupSlider" min="0" max="100" value="100" step="1"
+                  oninput="updatePostRecoupShare(this.value)">
+              </div>
+
+              <!-- Contracted New Singles (N) -->
+              <div class="deal-option-block">
+                <div class="slider-header-row">
+                  <label class="deal-option-label">Contracted New Singles ($N$)</label>
+                  <span class="slider-badge" id="singlesValBadge">0 singles (Catalog Only)</span>
+                </div>
+                <input type="range" id="singlesSlider" min="0" max="20" value="0" step="1"
+                  oninput="updateContractedSingles(this.value)">
+              </div>
+            </div>
+
+            <!-- Right Side: Estimate Card -->
+            <div class="glass-panel estimate-quote-panel">
+              <h3 class="estimate-heading">Your Advance Estimate</h3>
+              <div class="estimate-sub">Between</div>
+              <div class="estimate-number-hero" id="estRangeLow">$17,700</div>
+              <div class="estimate-sub">and</div>
+              <div class="estimate-number-hero" id="estRangeHigh">$39,900</div>
+
+              <div class="estimate-disclaimer">
+                <i data-lucide="info"></i>
+                Based on $<span id="estDeclaredDisplay">3,400</span>/month declared run-rate and <span
+                  id="estTermDisplay">3</span>-year term.
+              </div>
+
+              <button class="btn-primary-purple btn-hero" onclick="goToStage(4)">
+                <span>GET FUNDING NOW</span>
+              </button>
+
+              <a href="#" class="link-fineprint"
+                onclick="alert('Pricing is subject to verification of at least 6 months of historical royalty statement reports.'); return false;">Read
+                the Fine Print</a>
+            </div>
+
+          </div>
+        </section>
+
+
+        <!-- ================= STAGE 4: UPLOAD DISTRIBUTION REPORTS ================= -->
+        <section id="stage4" class="stage-section">
+          <div class="upload-stage-container animate-fade-in">
+
+            <div class="upload-header-block">
+              <h1 class="card-title">UPLOAD <span class="text-gradient">DISTRIBUTION REPORTS</span></h1>
+              <p class="upload-instructions">Please include 6 months of reports for each track that you want to include
+                in your advance.</p>
+            </div>
+
+            <div class="upload-grid-layout">
+
+              <!-- Left: Distributor Picker & Options -->
+              <div class="glass-panel distributor-select-panel">
+                <label class="panel-section-title">Select a Distributor</label>
+
+                <div class="custom-select-wrapper">
+                  <div class="custom-select-trigger" id="distributorSelectTrigger"
+                    onclick="toggleDistributorDropdown()">
+                    <div class="distributor-item-current" id="currentDistributorItem">
+                      <span class="dist-icon-badge" style="background:#1db954;">DK</span>
+                      <span class="dist-name">DistroKid</span>
+                    </div>
+                    <i data-lucide="chevron-down"></i>
+                  </div>
+
+                  <div class="custom-select-menu" id="distributorDropdownMenu" style="display: none;">
+                    <div class="dist-search-box">
+                      <input type="text" id="distSearchInput" placeholder="Filter distributors..."
+                        oninput="filterDistributorList(this.value)">
+                    </div>
+                    <div class="dist-options-list" id="distributorOptionsList"></div>
+                  </div>
+                </div>
+
+                <!-- Statement Basis (Net vs Gross) -->
+                <div class="statement-basis-card">
+                  <div class="basis-toggle-row">
+                    <label class="deal-option-label">Statement Revenue Basis</label>
+                    <div class="segmented-mini">
+                      <button class="seg-mini-btn active" id="basisNetBtn" onclick="setBasis('net')">Net</button>
+                      <button class="seg-mini-btn" id="basisGrossBtn" onclick="setBasis('gross')">Gross</button>
+                    </div>
+                  </div>
+
+                  <div id="grossFeeInputRow" class="gross-fee-wrapper" style="display: none;">
+                    <label class="form-label-sm">Distributor Fee Rate ($f_{dist}$)</label>
+                    <div class="percent-input-wrapper">
+                      <input type="number" id="grossFeeInput" class="text-input-sm" value="15" min="0" max="50"
+                        step="1">
+                      <span class="percent-symbol">%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Sample Datasets for 1-Click Testing -->
+                <div class="sample-loaders-card">
+                  <div class="sample-title-row">
+                    <span class="deal-option-label"><i data-lucide="sparkles"></i> 1-Click Validation Catalogs</span>
+                  </div>
+                  <div class="sample-btn-grid">
+                    <button class="sample-chip" onclick="loadSampleDataset('islem-23')">
+                      <strong>Islem-23</strong> <span>$11,442 Ground Truth</span>
+                    </button>
+                    <button class="sample-chip" onclick="loadSampleDataset('arta')">
+                      <strong>Arta</strong> <span>Multi-Source ($98,175)</span>
+                    </button>
+                    <button class="sample-chip" onclick="loadSampleDataset('ince')">
+                      <strong>INCE</strong> <span>$99/mo + 10 Singles</span>
+                    </button>
+                    <button class="sample-chip" onclick="loadSampleDataset('pulp')">
+                      <strong>PULP</strong> <span>$3.4k/mo + 300 Tracks</span>
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+
+              <!-- Right: Multi-File Dropzone Area -->
+              <div class="glass-panel file-dropzone-panel">
+
+                <div class="dropzone-box" id="fileDropzone"
+                  onclick="document.getElementById('statementFileInput').click()">
+                  <input type="file" id="statementFileInput" multiple accept=".csv,.tsv,.txt,.xlsx,.xls,.pdf"
+                    style="display:none;" onchange="handleFileSelection(event)">
+                  <div class="dropzone-icon"><i data-lucide="upload-cloud"></i></div>
+                  <div class="dropzone-main-text">Drag and drop or <span class="highlight-link">Browse</span></div>
+                  <div class="dropzone-formats">Formats supported: .csv, .tsv, .xlsx, .xls, .txt, .pdf</div>
+                </div>
+
+                <!-- File Staging Status List -->
+                <div class="uploaded-files-list" id="uploadedFilesList">
+                  <div class="empty-files-placeholder" id="emptyFilesNotice">
+                    <i data-lucide="file-spreadsheet"></i>
+                    <span>No files uploaded yet. Upload at least 6 months of statements to unlock the Exact Advance
+                      calculation.</span>
+                  </div>
+                </div>
+
+                <div class="upload-action-footer">
+                  <button class="btn-primary-purple btn-large" id="calculateExactBtn" disabled
+                    onclick="executeValuation()">
+                    <i data-lucide="calculator"></i>
+                    <span>CALCULATE EXACT ADVANCE</span>
+                  </button>
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+        </section>
+
+
+        <!-- ================= STAGE 5: EXACT ADVANCE & UNDERWRITING HUB ================= -->
+        <section id="stage5" class="stage-section">
+          <div class="results-dashboard-container animate-fade-in" id="resultsContainer">
+
+            <!-- Top Hero Banner: Advance Offers -->
+            <div class="hero-valuation-card">
+              <div class="hero-left-col">
+                <div class="hero-eyebrow">FINAL APPROVED VALUATION</div>
+                <div class="hero-total-amount" id="valTotalHero">$0</div>
+                <div class="hero-breakdown-pills">
+                  <div class="hero-pill">
+                    <span class="pill-title">CATALOGUE ADVANCE</span>
+                    <span class="pill-val" id="valCatalogPill">$0</span>
+                  </div>
+                  <div class="hero-pill" id="valNewReleasePillBlock">
+                    <span class="pill-title">NEW RELEASE ADVANCE</span>
+                    <span class="pill-val" id="valNewReleasePill">$0</span>
+                    <span class="pill-sub" id="valNewReleaseRangeSub">Range: $0 – $0</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="hero-right-col">
+                <div class="hero-action-buttons">
+                  <button class="btn-secondary-dark" onclick="downloadUnderwritingMemo()">
+                    <i data-lucide="file-text"></i> Export Memo
+                  </button>
+                  <button class="btn-secondary-dark" onclick="toggleProvenanceModal()">
+                    <i data-lucide="code"></i> JSON Provenance
+                  </button>
+                </div>
+                <div class="valuation-meta-box">
+                  <div><strong>Artist:</strong> <span id="valArtistMetaName">Aviella</span></div>
+                  <div><strong>Term:</strong> <span id="valTermMeta">3 Years</span></div>
+                  <div><strong>Recoupment Rate:</strong> <span id="valRhoMeta">70.0%</span></div>
+                  <div><strong>Time to Recoup:</strong> <span id="valTtrMeta">3.00 Yrs</span></div>
+                </div>
+              </div>
+            </div>
+
+
+
+            <!-- 2-Column Analytics Grid -->
+            <div class="analytics-two-col-grid">
+
+              <!-- Left Column: Catalog Analytics & Risk Diagnostics -->
+              <div class="glass-panel col-panel">
+                <h3 class="panel-section-title"><i data-lucide="bar-chart-2"></i> Catalogue Risk & Run-Rate</h3>
+
+                <div class="metric-tiles-row">
+                  <div class="metric-tile">
+                    <div class="metric-label">Trailing-3 Median $R_0$</div>
+                    <div class="metric-value" id="resR0Val">$0</div>
+                    <div class="metric-foot" id="resR0LastFoot">Last month: $0</div>
+                  </div>
+                  <div class="metric-tile">
+                    <div class="metric-label">Gini Concentration $G^*$</div>
+                    <div class="metric-value" id="resGiniVal">0.00</div>
+                    <div class="metric-foot" id="resGiniFoot">Top-1: 0% | Top-5: 0%</div>
+                  </div>
+                  <div class="metric-tile">
+                    <div class="metric-label">Risk Discount</div>
+                    <div class="metric-value" id="resRiskDiscVal">0.0%</div>
+                    <div class="metric-foot" id="resDecayCovFoot">Decay cov: 0%</div>
+                  </div>
+                </div>
+
+                <!-- Per-Song Revenue Share Table -->
+                <div class="table-container">
+                  <div class="table-title">Top Earning Recordings</div>
+                  <table class="data-table" id="topSongsTable">
+                    <thead>
+                      <tr>
+                        <th>Track Title</th>
+                        <th>Share</th>
+                        <th>Monthly Trend</th>
+                        <th>Severity</th>
+                      </tr>
+                    </thead>
+                    <tbody id="topSongsTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <!-- Right Column: New-Release & Payment Schedule Analytics -->
+              <div class="glass-panel col-panel">
+                <h3 class="panel-section-title"><i data-lucide="disc"></i> New-Release Forecast & Tranches</h3>
+
+                <div class="metric-tiles-row">
+                  <div class="metric-tile">
+                    <div class="metric-label">Median Peak $m_0$</div>
+                    <div class="metric-value" id="resM0Val">$0</div>
+                    <div class="metric-foot" id="resReleasesCountFoot">0 usable releases</div>
+                  </div>
+                  <div class="metric-tile">
+                    <div class="metric-label">Lifetime Multiple $L$</div>
+                    <div class="metric-value" id="resLVal">0.00</div>
+                    <div class="metric-foot" id="resTailFoot">Tail ratio: 0.00</div>
+                  </div>
+                  <div class="metric-tile">
+                    <div class="metric-label">At-Risk Cash Share</div>
+                    <div class="metric-value" id="resAtRiskShareVal">0.0%</div>
+                    <div class="metric-foot" id="resAtRiskAmtFoot">At risk: $0</div>
+                  </div>
+                </div>
+
+                <!-- Payment Milestone Tranches Table -->
+                <div class="table-container">
+                  <div class="table-title">Milestone Payment Tranches</div>
+                  <table class="data-table" id="scheduleTable">
+                    <thead>
+                      <tr>
+                        <th>Tranche Label</th>
+                        <th>Trigger Event</th>
+                        <th>Share</th>
+                        <th>Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody id="scheduleTableBody"></tbody>
+                  </table>
+                </div>
+
+              </div>
+
+            </div>
+
+            <!-- Active System Flags Panel -->
+            <div class="glass-panel flags-panel">
+              <h3 class="panel-section-title"><i data-lucide="alert-triangle"></i> System Flags & Underwriting
+                Disclosures</h3>
+              <div class="flags-badge-grid" id="flagsContainer"></div>
+            </div>
+
+          </div>
+        </section>
+
+      </div>
+    </main>
+
+  </div>
+
+  <!-- JSON Provenance Modal -->
+  <div class="modal-overlay" id="provenanceModal" style="display: none;">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2>Provenance Audit Block</h2>
+        <button class="close-btn" onclick="toggleProvenanceModal()"><i data-lucide="x"></i></button>
+      </div>
+      <div class="modal-body">
+        <pre class="json-viewer" id="provenanceJsonCode"></pre>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-primary-purple" onclick="copyProvenanceJson()">Copy JSON</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=3.0"></script>
+</body>
+
+</html>

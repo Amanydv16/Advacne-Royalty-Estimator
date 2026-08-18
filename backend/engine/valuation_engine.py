@@ -1,0 +1,178 @@
+"""
+Master Valuation Engine for Advance Royalty Sizing.
+Coordinates the entire deterministic pipeline from raw uploaded statement rows to final offers and provenance.
+"""
+from typing import List, Dict, Any, Optional
+from .config import DEFAULT_CONFIG
+from .normalizer import detect_and_normalize_table, parse_csv_or_tsv_content, NormalizationError
+from .ingestion_rules import apply_ingestion_rules
+from .catalog_pricer import compute_catalog_advance
+from .new_release_pricer import compute_new_release_advance
+from .schedule_builder import build_and_validate_schedule
+from .provenance import build_provenance_and_flags
+
+
+class ValuationEngine:
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        self.config = {**DEFAULT_CONFIG, **(config or {})}
+
+    def update_config(self, new_config: Dict[str, Any]):
+        self.config.update(new_config)
+
+    def evaluate_deal(
+        self,
+        statement_rows: List[Dict[str, Any]],
+        term: int = 3,
+        pay_through: float = 0.0,
+        post_recoup_share: float = 1.0,
+        singles_contracted: int = 0,
+        rights_scope: str = "sound_recording",
+        is_gross: bool = False,
+        distributor_fee: Optional[float] = None,
+        r_win: int = 3,
+        payment_tranches: Optional[List[Dict[str, Any]]] = None,
+        artist_metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute full valuation pipeline on normalized statement rows.
+        """
+        flags: List[str] = []
+
+        # Scope check (Section 4.3): Only sound recording is currently supported
+        if rights_scope.lower() not in ["sound_recording", "sound recording", "recording"]:
+            return {
+                "success": False,
+                "error": "OUT_OF_SCOPE: Sizing is currently calibrated for sound-recording rights only. Songwriting and combined rights are out of scope.",
+                "flags": ["OUT_OF_SCOPE"],
+                "detailed_flags": [{
+                    "code": "OUT_OF_SCOPE",
+                    "severity": "blocking",
+                    "title": "Out of Sizing Scope",
+                    "description": "Requested rights scope is outside the empirical sound-recording sizing engine."
+                }]
+            }
+
+        # Step 2 & 3: Ingestion Rules & Data Validation
+        ingestion_res = apply_ingestion_rules(statement_rows, config=self.config)
+        if not ingestion_res.is_priceable:
+            return {
+                "success": False,
+                "error": ingestion_res.rejection_reason or "Statement data failed admission criteria.",
+                "flags": ingestion_res.flags,
+                "detailed_flags": [
+                    {
+                        "code": f,
+                        "severity": "blocking" if f == "INSUFFICIENT_HISTORY" else "advisory",
+                        "title": f.replace("_", " ").title(),
+                        "description": "Fewer than 6 usable statement months were provided."
+                    }
+                    for f in ingestion_res.flags
+                ]
+            }
+
+        if is_gross:
+            if distributor_fee is None or distributor_fee <= 0:
+                return {
+                    "success": False,
+                    "error": "Distributor fee percentage is required when statements are gross.",
+                    "flags": ["GROSS_STATEMENTS"]
+                }
+            flags.append("GROSS_BASIS_APPLIED")
+
+        # Step 4, 5, 6: Catalogue Advance
+        catalog_res = compute_catalog_advance(
+            usable_rows=ingestion_res.usable_rows,
+            usable_months=ingestion_res.usable_months,
+            monthly_totals=ingestion_res.monthly_totals,
+            term=term,
+            pay_through=pay_through,
+            post_recoup_share=post_recoup_share,
+            r_win=r_win,
+            config=self.config
+        )
+
+        # Step 7, 8, 9, 10: New-Release Advance
+        new_release_res = compute_new_release_advance(
+            usable_rows=ingestion_res.usable_rows,
+            usable_months=ingestion_res.usable_months,
+            r0=catalog_res.r0,
+            n_contracted=singles_contracted,
+            term=catalog_res.term,
+            rho_t=catalog_res.rho_t,
+            config=self.config
+        )
+
+        # Step 11: Payment Schedule
+        schedule_res = None
+        if singles_contracted > 0:
+            schedule_res = build_and_validate_schedule(
+                raw_tranches=payment_tranches,
+                a_new=new_release_res.a_new,
+                n_contracted=singles_contracted,
+                term=catalog_res.term
+            )
+
+        # Step 12: Flags and Provenance Block
+        provenance = build_provenance_and_flags(
+            catalog_res=catalog_res,
+            new_release_res=new_release_res,
+            schedule_res=schedule_res,
+            ingestion_res=ingestion_res,
+            config=self.config,
+            artist_metadata=artist_metadata
+        )
+
+        # Format Final Result Response
+        a_catalog = round(catalog_res.a_catalog, 2)
+        a_new = round(new_release_res.a_new, 2) if (new_release_res and new_release_res.is_available and new_release_res.a_new is not None) else None
+        a_total = round(a_catalog + (a_new or 0.0), 2)
+
+        return {
+            "success": True,
+            "artist": artist_metadata or {"name": "Artist"},
+            "deal_terms": {
+                "term_years": catalog_res.term,
+                "pay_through_pct": round(pay_through * 100, 1),
+                "post_recoup_share_pct": round(post_recoup_share * 100, 1),
+                "singles_contracted": singles_contracted,
+                "recoupment_split_pct": round(catalog_res.rho_t * 100, 1)
+            },
+            "headline_offers": {
+                "a_catalog": a_catalog,
+                "a_new": a_new,
+                "a_total": a_total,
+                "new_release_range": {
+                    "low": round(new_release_res.range_lo, 2) if new_release_res and new_release_res.range_lo else None,
+                    "high": round(new_release_res.range_hi, 2) if new_release_res and new_release_res.range_hi else None
+                } if new_release_res and new_release_res.is_available else None
+            },
+            "catalog_analytics": {
+                "r0": round(catalog_res.r0, 2),
+                "r0_last": round(catalog_res.r0_last, 2),
+                "r0_window_months": catalog_res.r0_window_months,
+                "ttr_years": round(catalog_res.ttr_years, 2),
+                "gini_concentration": round(catalog_res.gini_star, 3) if catalog_res.gini_star is not None else None,
+                "song_count": catalog_res.song_count,
+                "top_1_share_pct": round(catalog_res.top_1_share * 100, 1),
+                "top_5_share_pct": round(catalog_res.top_5_share * 100, 1),
+                "risk_discount_pct": round(catalog_res.risk_discount * 100, 2),
+                "top_songs": catalog_res.per_song_decay[:10]
+            },
+            "new_release_analytics": {
+                "observable_releases_count": new_release_res.observable_releases_count,
+                "usable_releases_count": new_release_res.usable_releases_count,
+                "m0_hat": round(new_release_res.m0_hat, 2) if new_release_res.m0_hat else None,
+                "lifetime_multiple_l": round(new_release_res.lifetime_multiple_l, 2) if new_release_res.lifetime_multiple_l else None,
+                "r_tail": round(new_release_res.r_tail, 4) if new_release_res.r_tail else None,
+                "decay_shape": new_release_res.decay_shape,
+                "usable_releases": new_release_res.usable_releases_summary
+            } if new_release_res else None,
+            "payment_schedule": {
+                "tranches": schedule_res.tranches if schedule_res else [],
+                "at_risk_share_pct": round(schedule_res.at_risk_share * 100, 1) if schedule_res else 0.0,
+                "at_risk_amount": round(schedule_res.at_risk_amount, 2) if schedule_res else 0.0
+            } if schedule_res else None,
+            "flags": provenance["flags"],
+            "detailed_flags": provenance["detailed_flags"],
+            "provenance": provenance
+        }
