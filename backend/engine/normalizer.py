@@ -61,13 +61,8 @@ def parse_month_string(raw_val: Any) -> Optional[str]:
             if y_match:
                 year = int(y_match.group(1))
                 return f"{year:04d}-{m_num:02d}"
-            # Check leading/trailing digits like "03-MAR"
-            d_match = re.search(r"(\d{1,2})", val_str)
-            if d_match:
-                m_int = int(d_match.group(1))
-                if 1 <= m_int <= 12:
-                    m_num = m_int
-            return f"2025-{m_num:02d}" # Default fallback year if only month present
+            # Month name found but no 4-digit year exists -> drop row instead of defaulting
+            return None
 
     return None
 

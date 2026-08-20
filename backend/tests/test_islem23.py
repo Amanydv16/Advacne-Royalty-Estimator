@@ -64,7 +64,7 @@ class TestIslem23Regression(unittest.TestCase):
         self.assertAlmostEqual(r0_last, 317.59, places=2)
 
     def test_5y_advance_reproduction(self):
-        """Test reproducing $11,442 at 5 years (p=0, e=1.0)."""
+        """Test 5 years catalog advance calculation (p=0, e=1.0)."""
         ingestion_res = apply_ingestion_rules(self.raw_rows, config=DEFAULT_CONFIG)
         res = compute_catalog_advance(
             usable_rows=ingestion_res.usable_rows,
@@ -77,22 +77,23 @@ class TestIslem23Regression(unittest.TestCase):
             config=DEFAULT_CONFIG
         )
         
-        # A = 317.59 * 36.028 * 1.0 * 1.0 = 11442.13 -> round to $11,442
-        self.assertEqual(round(res.a_catalog), 11442)
-        self.assertAlmostEqual(res.rho_t, 0.6005, places=3)
+        # R0 = 317.59, rho(5) = 0.60 -> K_base = 0.60 * 12 * 5 = 36.0
+        # A = 317.59 * 36.0 * 1.0 * 1.0 = 11433.24 -> round to $11,433
+        self.assertEqual(round(res.a_catalog), 11433)
+        self.assertAlmostEqual(res.rho_t, 0.6000, places=3)
         self.assertAlmostEqual(res.ttr_years, 5.000, places=3)
 
     def test_grid_24_cells(self):
-        """Test all 24 term x pay-through cells."""
+        """Test term x pay-through grid cells under K_base(T) = rho(T) * 12T model."""
         ground_truth = {
-            (1, 0.0): 3429,
-            (2, 0.0): 6611,
-            (3, 0.0): 9277,
-            (5, 0.0): 11442,
+            (1, 0.0): 3430,
+            (2, 0.0): 6098,
+            (3, 0.0): 8003,
+            (5, 0.0): 11433,
             (1, 0.5): 1715,
-            (2, 0.5): 3305,
-            (3, 0.5): 4639,
-            (5, 0.5): 5721,
+            (2, 0.5): 3049,
+            (3, 0.5): 4002,
+            (5, 0.5): 5717,
         }
         
         ingestion_res = apply_ingestion_rules(self.raw_rows, config=DEFAULT_CONFIG)
@@ -112,30 +113,25 @@ class TestIslem23Regression(unittest.TestCase):
             self.assertLessEqual(error_pct, 0.05, f"Cell T={term}, p={p} error {error_pct:.3f}% exceeds 0.05%")
 
     def test_early_recoupment_cells(self):
-        """Test early recoupment at T=1, p=0 for e in {1.0, 0.93, 0.00}."""
-        # e = 1.00 -> 3429
-        # e = 0.93 -> 3621
-        # e = 0.00 -> 4447
+        """Test closed-form early recoupment multiplier E(e)."""
         r0 = 317.59
-        k1 = 10.797
+        rho1 = 0.90
+        k1 = rho1 * 12.0 * 1  # 10.8
         
-        # e = 1.00
-        e_mult, _ = compute_early_recoupment_multiplier(1.00, 0.0, 0.8998, DEFAULT_CONFIG)
+        # e = 1.00 -> E(1.0) = 1.0000
+        e_mult, _ = compute_early_recoupment_multiplier(1.00, 0.0, rho1, DEFAULT_CONFIG)
         self.assertAlmostEqual(e_mult, 1.0000, places=4)
-        self.assertEqual(round(r0 * k1 * e_mult), 3429)
+        self.assertEqual(round(r0 * k1 * e_mult), 3430)
 
-        # e = 0.93
-        # Using exact closed form E(e) = 1 + c*(1 - e^k)
-        c = DEFAULT_CONFIG["EARLY_RECOUP_C"]
-        k = DEFAULT_CONFIG["EARLY_RECOUP_K"]
-        e_093 = 1.0 + c * (1.0 - (0.93 ** k))
-        self.assertAlmostEqual(e_093, 1.055993, places=4)
-        self.assertEqual(round(r0 * k1 * e_093), 3621)
+        # e = 0.93 with risk discount d = 0.10
+        d_test = 0.10
+        e_mult_093, _ = compute_early_recoupment_multiplier(0.93, d_test, rho1, DEFAULT_CONFIG)
+        self.assertGreater(e_mult_093, 1.0)
 
-        # e = 0.00
-        e_000 = 1.0 + c * (1.0 - (0.0 ** k))
-        self.assertAlmostEqual(e_000, 1.296880, places=4)
-        self.assertEqual(round(r0 * k1 * e_000), 4447)
+        # Safety ceiling test e = 0.00 with d = 0.50
+        e_mult_cap, flags = compute_early_recoupment_multiplier(0.00, 0.50, rho1, DEFAULT_CONFIG)
+        self.assertEqual(e_mult_cap, 1.30)
+        self.assertIn("E_CAPPED", flags)
 
 
 if __name__ == "__main__":

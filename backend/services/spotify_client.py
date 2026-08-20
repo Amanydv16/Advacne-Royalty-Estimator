@@ -27,6 +27,7 @@ class SpotifyClient:
         self._load_env_file()
         self.client_id = os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
         self.client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "").strip()
+        self.openai_api_key = os.environ.get("OPENAI_API_KEY", "").strip()
 
         self._token: Optional[str] = None
         self._expires_at: float = 0.0
@@ -190,9 +191,50 @@ class SpotifyClient:
         """Strip non-alphanumeric and lowercase for robust comparison."""
         return re.sub(r"[^a-z0-9]", "", (text or "").lower())
 
-    def search_artists(self, query: str, limit: int = 15) -> List[Dict[str, Any]]:
+    def _query_openai_artist_intelligence(self, query: str) -> Optional[Dict[str, Any]]:
         """
-        Search Spotify live for artists with ranking and caching.
+        Use OpenAI API (gpt-4o-mini) to resolve artist spelling, typos, and search variations
+        for small, niche, or misspelled artists.
+        """
+        key = self.openai_api_key or os.environ.get("OPENAI_API_KEY", "").strip()
+        if not key:
+            return None
+
+        try:
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json"
+                },
+                data=json.dumps({
+                    "model": "gpt-4o-mini",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a music catalog intelligence assistant. Analyze the user's artist search query. "
+                                "Correct typos, identify exact canonical artist names, primary genres, and search term variations. "
+                                "Respond strictly in JSON format: {'canonical_name': '...', 'search_terms': ['...'], 'genres': ['...']}"
+                            )
+                        },
+                        {"role": "user", "content": f"Artist search: {query}"}
+                    ],
+                    "response_format": {"type": "json_object"}
+                }).encode("utf-8")
+            )
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                return json.loads(content)
+        except Exception as e:
+            print(f"[SpotifyClient] OpenAI resolution notice for {query!r}: {e}")
+            return None
+
+    def search_artists(self, query: str, limit: int = 25) -> List[Dict[str, Any]]:
+        """
+        Search for artists (including small, indie, and unverified artists)
+        across live APIs with ranking and caching.
         """
         q = (query or "").strip()
         if not q:
@@ -208,40 +250,78 @@ class SpotifyClient:
                 if exp > now:
                     return cached_res
 
-        # 1. Query Spotify API
-        encoded_q = urllib.parse.quote(q)
-        spotify_url = f"https://api.spotify.com/v1/search?q={encoded_q}&type=artist&limit={limit}"
-        data = self._execute_request(spotify_url)
+        q_norm = self.normalize_text(q)
+        raw_candidates: List[Dict[str, Any]] = []
 
-        raw_candidates = []
-        if data and "artists" in data and "items" in data["artists"]:
-            for item in data["artists"]["items"]:
-                name = item.get("name", "")
-                s_id = item.get("id", "")
-                followers = item.get("followers", {}).get("total", 0)
-                popularity = item.get("popularity", 0)
-                genres = item.get("genres", [])
-                image_url = self.select_best_image_320(item.get("images"))
-                spotify_url_link = item.get("external_urls", {}).get("spotify", f"https://open.spotify.com/artist/{s_id}")
+        # Optional AI Artist Resolution via OpenAI API
+        ai_info = self._query_openai_artist_intelligence(q)
+        search_queries = [q]
+        if ai_info and isinstance(ai_info, dict):
+            c_name = ai_info.get("canonical_name")
+            if c_name and c_name.strip().lower() != q.lower():
+                search_queries.append(c_name.strip())
+            terms = ai_info.get("search_terms", [])
+            for t in terms:
+                if isinstance(t, str) and t.strip() and t.strip().lower() not in [sq.lower() for sq in search_queries]:
+                    search_queries.append(t.strip())
 
-                raw_candidates.append({
-                    "id": s_id,
-                    "name": name,
-                    "followers": followers,
-                    "popularity": popularity,
-                    "genres": genres if genres else ["sound recording"],
-                    "imageUrl": image_url,
-                    "verified": True,
-                    "spotifyUrl": spotify_url_link,
-                    "source": "spotify"
-                })
+        # 1. Query Spotify API if credentials exist
+        if self.has_credentials:
+            for sq in search_queries[:2]:
+                encoded_q = urllib.parse.quote(sq)
+                spotify_url = f"https://api.spotify.com/v1/search?q={encoded_q}&type=artist&limit=50"
+                data = self._execute_request(spotify_url)
 
-        # 2. Fallback to Global Streaming Directory if Spotify direct was empty
-        if not raw_candidates:
-            raw_candidates = self._fallback_streaming_search(q)
+                if data and "artists" in data and "items" in data["artists"]:
+                    for item in data["artists"]["items"]:
+                        name = item.get("name", "")
+                        s_id = item.get("id", "")
+                        followers = item.get("followers", {}).get("total", 0)
+                        popularity = item.get("popularity", 0)
+                        genres = item.get("genres", [])
+                        image_url = self.select_best_image_320(item.get("images"))
+                        spotify_url_link = item.get("external_urls", {}).get("spotify", f"https://open.spotify.com/artist/{s_id}")
 
-        # 3. Rank Candidates
+                        raw_candidates.append({
+                            "id": s_id,
+                            "name": name,
+                            "followers": followers,
+                            "popularity": popularity,
+                            "genres": genres if genres else (ai_info.get("genres") if ai_info else ["sound recording"]),
+                            "imageUrl": image_url,
+                            "verified": True,
+                            "spotifyUrl": spotify_url_link,
+                            "source": "spotify"
+                        })
+
+        # Check if Spotify returned an exact or prefix match
+        has_close_match = any(
+            self.normalize_text(c.get("name", "")) == q_norm or self.normalize_text(c.get("name", "")).startswith(q_norm)
+            for c in raw_candidates
+        )
+
+        # 2. Query Global Streaming Directory (Deezer, iTunes, MusicBrainz)
+        # Always run fallback if Spotify direct returned empty or lacked close matches
+        if not raw_candidates or not has_close_match:
+            for sq in search_queries[:3]:
+                fallback_candidates = self._fallback_streaming_search(sq)
+                
+                # Merge fallback candidates into raw_candidates, preserving existing Spotify hits
+                existing_names = {self.normalize_text(c.get("name", "")) for c in raw_candidates}
+                for fc in fallback_candidates:
+                    fc_norm = self.normalize_text(fc.get("name", ""))
+                    if fc_norm not in existing_names:
+                        if ai_info and ai_info.get("genres") and fc.get("genres") == ["sound recording"]:
+                            fc["genres"] = ai_info["genres"]
+                        raw_candidates.append(fc)
+                        existing_names.add(fc_norm)
+                    existing_names.add(fc_norm)
+
+        # 3. Rank Candidates strictly prioritizing exact matches for small/indie artists
         ranked = self._rank_candidates(q, raw_candidates)
+
+        # Trim to requested limit
+        ranked = ranked[:limit]
 
         # Cache result
         with self._cache_lock:
@@ -251,31 +331,46 @@ class SpotifyClient:
 
     def _rank_candidates(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Ranks candidates strictly by:
-        1. Exact artist-name match
-        2. Prefix match
-        3. Substring match
-        4. Spotify popularity
-        5. Follower count
+        Ranks candidates strictly by match quality first (so small artists with exact matches rank top):
+        1. Exact artist-name match (Score 3)
+        2. Prefix match (Score 2)
+        3. Substring match (Score 1)
+        4. Spotify/Streaming popularity & followers (Tie-breaker)
         """
         q_norm = self.normalize_text(query)
         q_lower = query.lower()
 
-        def score_candidate(c: Dict[str, Any]) -> Tuple[int, int, int, int, int]:
+        # Unique deduplication by normalized name & source
+        seen_keys = set()
+        unique_candidates = []
+        for c in candidates:
+            name_norm = self.normalize_text(c.get("name", ""))
+            c_id = c.get("id", "")
+            key = (name_norm, c_id) if c_id else (name_norm, c.get("source", ""))
+            if key not in seen_keys and name_norm:
+                seen_keys.add(key)
+                unique_candidates.append(c)
+
+        def score_candidate(c: Dict[str, Any]) -> Tuple[int, int, int]:
             name = c.get("name", "")
             name_norm = self.normalize_text(name)
             name_lower = name.lower()
 
-            exact_match = 1 if name_norm == q_norm or name_lower == q_lower else 0
-            prefix_match = 1 if (name_norm.startswith(q_norm) or name_lower.startswith(q_lower)) and not exact_match else 0
-            contains_match = 1 if (q_norm in name_norm or q_lower in name_lower) and not (exact_match or prefix_match) else 0
-            popularity = c.get("popularity", 0)
-            followers = c.get("followers", 0)
+            if name_norm == q_norm or name_lower == q_lower:
+                match_score = 3
+            elif (name_norm.startswith(q_norm) or name_lower.startswith(q_lower)) and q_norm:
+                match_score = 2
+            elif (q_norm in name_norm or q_lower in name_lower) and q_norm:
+                match_score = 1
+            else:
+                match_score = 0
 
-            # Return priority tuple for descending sort
-            return (exact_match, prefix_match, contains_match, popularity, followers)
+            popularity = c.get("popularity", 0) or 0
+            followers = c.get("followers", 0) or 0
 
-        return sorted(candidates, key=score_candidate, reverse=True)
+            return (match_score, popularity, followers)
+
+        return sorted(unique_candidates, key=score_candidate, reverse=True)
 
     # ------------------------------------------------------------------
     # Keyless Spotify identity resolution
@@ -587,41 +682,79 @@ class SpotifyClient:
 
     def _fallback_streaming_search(self, query: str) -> List[Dict[str, Any]]:
         """
-        Resilient fallback querying global music index when Spotify API is unavailable.
+        Resilient multi-provider fallback querying global streaming indices (Deezer, iTunes, MusicBrainz)
+        to discover small, indie, and independent artists.
         """
         q_clean = query.strip().lower()
-        
-        # Check canonical directory
-        for key, artists in self.CANONICAL_SPOTIFY_MAP.items():
-            if q_clean in key or key in q_clean:
-                return artists
+        q_norm = self.normalize_text(query)
+        candidates: List[Dict[str, Any]] = []
 
-        candidates = []
+        # 1. Check canonical directory for EXACT match only (prevent substring hijacking)
+        for key, artists in self.CANONICAL_SPOTIFY_MAP.items():
+            key_norm = self.normalize_text(key)
+            if q_norm == key_norm or q_clean == key:
+                candidates.extend(artists)
+                break
+            for art in artists:
+                if self.normalize_text(art.get("name", "")) == q_norm:
+                    candidates.append(art)
+
+        encoded_q = urllib.parse.quote(query)
+
+        # 2. Query Deezer API for live artists (including small/indie artists)
         try:
-            encoded_q = urllib.parse.quote(query)
-            deezer_url = f"https://api.deezer.com/search/artist?q={encoded_q}&limit=10"
+            deezer_url = f"https://api.deezer.com/search/artist?q={encoded_q}&limit=25"
             req = urllib.request.Request(deezer_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=3.0) as resp:
+            with urllib.request.urlopen(req, timeout=3.5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                for item in data.get("data", []):
+                for item in (data or {}).get("data", []) or []:
                     name = item.get("name", "")
+                    if not name:
+                        continue
                     d_id = str(item.get("id", ""))
                     picture = item.get("picture_big") or item.get("picture_medium") or item.get("picture") or ""
-                    nb_fan = item.get("nb_fan", 0)
+                    nb_fan = item.get("nb_fan", 0) or 0
                     
                     candidates.append({
-                        "id": f"art_{d_id}",
+                        "id": f"dz_{d_id}",
                         "name": name,
                         "followers": nb_fan,
                         "popularity": min(100, int(math.log10(max(1, nb_fan)) * 15)),
                         "genres": ["sound recording"],
                         "imageUrl": picture,
-                        "verified": True,
-                        "spotifyUrl": f"https://open.spotify.com/artist/{d_id}",
+                        "verified": False,
+                        "spotifyUrl": "",
                         "source": "global_directory"
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[SpotifyClient] Deezer search warning for {query!r}: {e}")
+
+        # 3. Query iTunes / Apple Music API for indie artists worldwide
+        try:
+            itunes_url = f"https://itunes.apple.com/search?term={encoded_q}&entity=musicArtist&limit=25"
+            req = urllib.request.Request(itunes_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=3.5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                for item in (data or {}).get("results", []) or []:
+                    name = item.get("artistName", "")
+                    if not name:
+                        continue
+                    a_id = str(item.get("artistId", ""))
+                    genre = item.get("primaryGenreName", "sound recording")
+                    
+                    candidates.append({
+                        "id": f"itunes_{a_id}",
+                        "name": name,
+                        "followers": 50,
+                        "popularity": 40 if self.normalize_text(name) == q_norm else 20,
+                        "genres": [genre.lower()],
+                        "imageUrl": "",
+                        "verified": False,
+                        "spotifyUrl": item.get("artistLinkUrl", ""),
+                        "source": "apple_music"
+                    })
+        except Exception as e:
+            print(f"[SpotifyClient] iTunes search warning for {query!r}: {e}")
 
         return candidates
 

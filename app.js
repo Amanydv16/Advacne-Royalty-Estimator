@@ -190,14 +190,13 @@ async function fetchSpotifyArtists(query) {
     const res = await fetch(`/api/spotify/search?q=${encodeURIComponent(query)}`);
     if (res.ok) {
       const data = await res.json();
-      if (data.artists && data.artists.length > 0) {
-        renderSpotifySearchResults(data.artists);
-        return;
-      }
+      renderSpotifySearchResults(data.artists || [], query);
+      return;
     }
   } catch (err) {
     console.warn('API search error:', err);
   }
+  renderSpotifySearchResults([], query);
 }
 
 function formatFollowers(count) {
@@ -207,64 +206,96 @@ function formatFollowers(count) {
   return count.toLocaleString() + ' followers';
 }
 
-function renderSpotifySearchResults(items) {
+function renderSpotifySearchResults(items, query = '') {
   const container = document.getElementById('spotifySearchResults');
-  if (!items || items.length === 0) {
+  const safeQuery = (query || '').trim();
+  const qNorm = safeQuery.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  let listHtml = '';
+
+  if (items && items.length > 0) {
+    listHtml = items.map(a => {
+      const img = a.imageUrl || a.image || '';
+      const hasImg = img && img.trim().length > 0;
+      const isLabel = state.entityType === 'label';
+      const genreText = isLabel ? 'Record Label' : ((a.genres && a.genres.length > 0) ? a.genres.slice(0, 2).join(', ') : 'Artist');
+      const artistId = a.id || '';
+      const spotifyUrl = a.spotifyUrl || (a.spotify_uri ? `https://open.spotify.com/artist/${a.spotify_uri.replace('spotify:artist:', '')}` : '');
+      const followers = !isLabel ? formatFollowers(a.followers || a.monthly_listeners || 0) : null;
+      const isSpotifyVerified = a.source === 'spotify' || a.verified === true;
+      const popularityPct = a.popularity ? Math.min(100, a.popularity) : null;
+
+      return `
+        <div class="artist-suggestion-card" onclick="selectArtist('${escapeHtml(a.name)}', '${img}', '${artistId}', '${escapeHtml(genreText)}', '${escapeHtml(spotifyUrl)}')">
+          <div class="artist-suggestion-avatar-wrap">
+            ${hasImg
+              ? `<img src="${img}" alt="${escapeHtml(a.name)}" class="artist-suggestion-avatar" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                 <div class="artist-suggestion-avatar-fallback" style="display:none"><i data-lucide="music"></i></div>`
+              : `<div class="artist-suggestion-avatar-fallback"><i data-lucide="music"></i></div>`
+            }
+            ${isSpotifyVerified ? `<div class="spotify-verified-dot" title="Verified on Spotify"></div>` : ''}
+          </div>
+
+          <div class="artist-suggestion-info">
+            <div class="artist-suggestion-name">${escapeHtml(a.name)}</div>
+            <div class="artist-suggestion-meta">
+              ${genreText ? `<span class="artist-genre-tag">${escapeHtml(genreText)}</span>` : ''}
+              ${followers ? `<span class="artist-follower-count"><i data-lucide="users" style="width:11px;height:11px;vertical-align:middle;margin-right:3px;"></i>${followers}</span>` : ''}
+            </div>
+            ${popularityPct !== null ? `
+              <div class="artist-popularity-bar">
+                <div class="artist-popularity-fill" style="width: ${popularityPct}%"></div>
+              </div>` : ''}
+          </div>
+
+          <div class="artist-suggestion-actions">
+            ${spotifyUrl ? `
+              <a href="${escapeHtml(spotifyUrl)}" target="_blank" rel="noopener noreferrer"
+                 class="spotify-open-btn" title="Open on Spotify"
+                 onclick="event.stopPropagation()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
+                <span>Spotify</span>
+              </a>` : ''}
+            <div class="artist-suggestion-select-hint"><i data-lucide="corner-down-left" style="width:12px;height:12px;"></i></div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Check if an exact match exists in the returned items
+  const hasExact = (items || []).some(a => (a.name || '').toLowerCase().replace(/[^a-z0-9]/g, '') === qNorm);
+
+  // If query is present and not an exact match, append option for custom small/indie artist
+  if (safeQuery && !hasExact) {
+    const customId = `indie_${Math.abs(hashString(safeQuery))}`;
+    const customCard = `
+      <div class="artist-suggestion-card custom-artist-option" style="background: rgba(147, 51, 234, 0.08); border-top: 1px solid rgba(255,255,255,0.08);" onclick="selectArtist('${escapeHtml(safeQuery)}', '', '${customId}', 'Independent Artist', '')">
+        <div class="artist-suggestion-avatar-wrap">
+          <div class="artist-suggestion-avatar-fallback" style="background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #fff;">
+            <i data-lucide="plus"></i>
+          </div>
+        </div>
+        <div class="artist-suggestion-info">
+          <div class="artist-suggestion-name">Add "${escapeHtml(safeQuery)}"</div>
+          <div class="artist-suggestion-meta">
+            <span class="artist-genre-tag" style="background: rgba(168, 85, 247, 0.2); color: #c084fc;">Independent / Small Artist</span>
+          </div>
+        </div>
+        <div class="artist-suggestion-actions">
+          <div class="artist-suggestion-select-hint" style="color: #c084fc;"><i data-lucide="arrow-right" style="width:14px;height:14px;"></i> Select</div>
+        </div>
+      </div>
+    `;
+    listHtml += customCard;
+  }
+
+  if (!listHtml) {
     container.style.display = 'none';
     return;
   }
 
-  container.innerHTML = `
-    <div class="artist-suggestion-list">
-      ${items.map(a => {
-        const img = a.imageUrl || a.image || '';
-        const hasImg = img && img.trim().length > 0;
-        const isLabel = state.entityType === 'label';
-        const genreText = isLabel ? 'Record Label' : ((a.genres && a.genres.length > 0) ? a.genres.slice(0, 2).join(', ') : 'Artist');
-        const artistId = a.id || '';
-        const spotifyUrl = a.spotifyUrl || (a.spotify_uri ? `https://open.spotify.com/artist/${a.spotify_uri.replace('spotify:artist:', '')}` : '');
-        const followers = !isLabel ? formatFollowers(a.followers || a.monthly_listeners || 0) : null;
-        const isSpotifyVerified = a.source === 'spotify' || a.verified === true;
-        const popularityPct = a.popularity ? Math.min(100, a.popularity) : null;
-
-        return `
-          <div class="artist-suggestion-card" onclick="selectArtist('${escapeHtml(a.name)}', '${img}', '${artistId}', '${escapeHtml(genreText)}', '${escapeHtml(spotifyUrl)}')">
-            <div class="artist-suggestion-avatar-wrap">
-              ${hasImg
-                ? `<img src="${img}" alt="${escapeHtml(a.name)}" class="artist-suggestion-avatar" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                   <div class="artist-suggestion-avatar-fallback" style="display:none"><i data-lucide="music"></i></div>`
-                : `<div class="artist-suggestion-avatar-fallback"><i data-lucide="music"></i></div>`
-              }
-              ${isSpotifyVerified ? `<div class="spotify-verified-dot" title="Verified on Spotify"></div>` : ''}
-            </div>
-
-            <div class="artist-suggestion-info">
-              <div class="artist-suggestion-name">${escapeHtml(a.name)}</div>
-              <div class="artist-suggestion-meta">
-                ${genreText ? `<span class="artist-genre-tag">${escapeHtml(genreText)}</span>` : ''}
-                ${followers ? `<span class="artist-follower-count"><i data-lucide="users" style="width:11px;height:11px;vertical-align:middle;margin-right:3px;"></i>${followers}</span>` : ''}
-              </div>
-              ${popularityPct !== null ? `
-                <div class="artist-popularity-bar">
-                  <div class="artist-popularity-fill" style="width: ${popularityPct}%"></div>
-                </div>` : ''}
-            </div>
-
-            <div class="artist-suggestion-actions">
-              ${spotifyUrl ? `
-                <a href="${escapeHtml(spotifyUrl)}" target="_blank" rel="noopener noreferrer"
-                   class="spotify-open-btn" title="Open on Spotify"
-                   onclick="event.stopPropagation()">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
-                  <span>Spotify</span>
-                </a>` : ''}
-              <div class="artist-suggestion-select-hint"><i data-lucide="corner-down-left" style="width:12px;height:12px;"></i></div>
-            </div>
-          </div>
-        `;
-      }).join('')}
-    </div>
-  `;
+  container.innerHTML = `<div class="artist-suggestion-list">${listHtml}</div>`;
   container.style.display = 'block';
   lucide.createIcons();
 }
@@ -301,31 +332,47 @@ async function selectArtist(name, image, artistId, genreText = 'Artist – Sound
 
 async function fetchArtistDetails(artistId, artistName) {
   try {
-    const res = await fetch(`/api/spotify/artist-details?artist_id=${encodeURIComponent(artistId)}&artist_name=${encodeURIComponent(artistName)}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.tracks) {
-        state.selectedArtist.catalogTracks = data.tracks;
+    // 1. Fetch catalog tracks from /api/spotify/artist-tracks
+    const tracksRes = await fetch(`/api/spotify/artist-tracks?artistId=${encodeURIComponent(artistId)}&artistName=${encodeURIComponent(artistName)}`);
+    let catalogTracks = [];
+    if (tracksRes.ok) {
+      catalogTracks = await tracksRes.json();
+      if (Array.isArray(catalogTracks)) {
+        state.selectedArtist.catalogTracks = catalogTracks;
       }
-      if (data.detectedDistributor) {
-        state.selectedArtist.detectedDistributor = data.detectedDistributor;
+    }
+
+    // Fallback to /api/spotify/artist-details if catalogTracks was not array
+    if (!catalogTracks || !Array.isArray(catalogTracks) || catalogTracks.length === 0) {
+      const res = await fetch(`/api/spotify/artist-details?artist_id=${encodeURIComponent(artistId)}&artist_name=${encodeURIComponent(artistName)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.tracks) {
+          state.selectedArtist.catalogTracks = data.tracks;
+          catalogTracks = data.tracks;
+        }
+        if (data.detectedDistributor) {
+          state.selectedArtist.detectedDistributor = data.detectedDistributor;
+        }
+      }
+    }
+
+    // 2. Extract ISRCs and perform Soundcharts Rollup POST query
+    const isrcs = Array.from(new Set((catalogTracks || []).map(t => t.isrc).filter(Boolean)));
+    if (isrcs.length > 0) {
+      const rollupRes = await fetch('/api/admin/investment-memo/soundcharts-rollup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isrcs })
+      });
+      if (rollupRes.ok) {
+        const rollupData = await rollupRes.json();
+        state.selectedArtist.soundchartsRollup = rollupData;
+        console.log(`[Soundcharts Rollup] ${artistName}:`, rollupData);
       }
     }
   } catch (err) {
-    console.warn('Error loading artist details:', err);
-  }
-}
-
-
-async function fetchArtistCatalog(artistName, artistUri) {
-  try {
-    const res = await fetch(`/api/spotify/artist-tracks?artist_name=${encodeURIComponent(artistName)}`);
-    if (res.ok) {
-      const data = await res.json();
-      state.selectedArtist.catalogTracks = data.tracks || [];
-    }
-  } catch (err) {
-    console.warn('Error loading catalog tracks:', err);
+    console.warn('Error loading artist details & streaming rollup:', err);
   }
 }
 
