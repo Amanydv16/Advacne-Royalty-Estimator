@@ -234,7 +234,7 @@ class SpotifyClient:
     def search_artists(self, query: str, limit: int = 25) -> List[Dict[str, Any]]:
         """
         Search for artists (including small, indie, and unverified artists)
-        across live APIs with ranking and caching.
+        across live APIs with ranking and image enrichment via Spotify oEmbed.
         """
         q = (query or "").strip()
         if not q:
@@ -323,11 +323,49 @@ class SpotifyClient:
         # Trim to requested limit
         ranked = ranked[:limit]
 
-        # Cache result
+        # 4. Enrich missing profile images via MusicBrainz → Spotify oEmbed (real CDN images)
+        #    Run in parallel threads so we don't block the response for all results at once.
+        #    Only attempt enrichment for top-8 results that are still missing an image.
+        candidates_needing_image = [
+            (i, c) for i, c in enumerate(ranked[:8])
+            if not c.get("imageUrl")
+        ]
+
+        if candidates_needing_image:
+            results_lock = threading.Lock()
+
+            def _enrich_image(idx: int, candidate: Dict[str, Any]):
+                try:
+                    enriched = self.resolve_spotify_identity(candidate["name"])
+                    if enriched and enriched.get("imageUrl"):
+                        with results_lock:
+                            ranked[idx]["imageUrl"] = enriched["imageUrl"]
+                            # Also backfill real Spotify ID / URL if we didn't have one
+                            if not ranked[idx].get("id") or ranked[idx]["id"].startswith(("dz_", "itunes_")):
+                                ranked[idx]["id"] = enriched.get("id", ranked[idx]["id"])
+                            if not ranked[idx].get("spotifyUrl"):
+                                ranked[idx]["spotifyUrl"] = enriched.get("spotifyUrl", "")
+                            if not ranked[idx].get("verified"):
+                                ranked[idx]["verified"] = True
+                except Exception as e:
+                    print(f"[SpotifyClient] Image enrichment skipped for {candidate.get('name')!r}: {e}")
+
+            threads = []
+            for idx, candidate in candidates_needing_image:
+                t = threading.Thread(target=_enrich_image, args=(idx, candidate), daemon=True)
+                t.start()
+                threads.append(t)
+
+            # Wait up to 6s for enrichment threads before returning results
+            for t in threads:
+                t.join(timeout=6.0)
+
+        # Cache enriched result for 10 minutes
         with self._cache_lock:
-            self._search_cache[cache_key] = (now + self._cache_ttl, ranked)
+            self._search_cache[cache_key] = (now + 600.0, ranked)
 
         return ranked
+
 
     def _rank_candidates(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -417,6 +455,7 @@ class SpotifyClient:
         """
         Spotify's public oEmbed endpoint -- no auth required.
         Returns the canonical artist name and the real Spotify CDN profile image.
+        Falls back to og:image meta-tag scraping when oEmbed returns no thumbnail.
         """
         sid = (spotify_artist_id or "").strip()
         if not sid:
@@ -427,13 +466,15 @@ class SpotifyClient:
                 return self._oembed_cache[sid]
 
         artist_url = f"https://open.spotify.com/artist/{sid}"
+        result = None
+
+        # --- Strategy 1: oEmbed ---
         data = self._get_json(
             "https://open.spotify.com/oembed?url=" + urllib.parse.quote(artist_url, safe=""),
             {"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
             5.0,
         )
 
-        result = None
         if isinstance(data, dict) and data.get("thumbnail_url"):
             result = {
                 "id": sid,
@@ -442,9 +483,64 @@ class SpotifyClient:
                 "spotifyUrl": artist_url,
             }
 
+        # --- Strategy 2: Scrape og:image from open.spotify.com artist page ---
+        if not result:
+            try:
+                req = urllib.request.Request(
+                    artist_url,
+                    headers={
+                        "User-Agent": (
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/124.0 Safari/537.36"
+                        ),
+                        "Accept": "text/html,application/xhtml+xml",
+                        "Accept-Language": "en-US,en;q=0.9",
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=5.0) as resp:
+                    html = resp.read(65536).decode("utf-8", errors="replace")
+
+                # Look for og:image or twitter:image meta tags
+                import re as _re
+                og_match = _re.search(
+                    r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+                    html, _re.IGNORECASE
+                ) or _re.search(
+                    r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+                    html, _re.IGNORECASE
+                ) or _re.search(
+                    r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
+                    html, _re.IGNORECASE
+                )
+
+                # Also try to grab the canonical artist name from og:title / title tag
+                name_match = _re.search(
+                    r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+                    html, _re.IGNORECASE
+                ) or _re.search(r'<title>([^<]+)</title>', html, _re.IGNORECASE)
+
+                if og_match:
+                    img_url = og_match.group(1).strip()
+                    artist_name_scraped = ""
+                    if name_match:
+                        raw_title = name_match.group(1).strip()
+                        # Strip " | Spotify" and similar suffixes
+                        artist_name_scraped = _re.sub(r"\s*[\|–—]\s*Spotify.*$", "", raw_title).strip()
+                    if img_url and "i.scdn.co" in img_url:
+                        result = {
+                            "id": sid,
+                            "name": artist_name_scraped,
+                            "imageUrl": img_url,
+                            "spotifyUrl": artist_url,
+                        }
+            except Exception as e:
+                print(f"[SpotifyClient] og:image scrape failed for {sid!r}: {e}")
+
         with self._resolve_lock:
             self._oembed_cache[sid] = result
         return result
+
 
     def resolve_spotify_identity(self, artist_name: str) -> Optional[Dict[str, Any]]:
         """
