@@ -288,6 +288,7 @@ def search_labels(q: str):
 # Live Spotify Client Integration
 # -------------------------------------------------------------
 from backend.services.spotify_client import spotify_client
+from backend.services.llm_parser import smart_parse, smart_parse_files
 
 
 from pydantic import BaseModel
@@ -604,23 +605,21 @@ async def evaluate_statements(
     and returns exact advance numbers, Gini, and Provenance.
     """
     raw_rows: List[Dict[str, Any]] = []
+    parser_summaries: List[Dict[str, Any]] = []
 
     f_dist = (distributor_fee_pct / 100.0) if (distributor_fee_pct and is_gross) else None
 
-    # 1. Process uploaded files if provided
+    # 1. Process uploaded files — try rule-based first, auto-fallback to GPT-4o-mini
     if files and len(files) > 0 and files[0].filename:
+        file_inputs = []
         for f in files:
             content_bytes = await f.read()
-            filename = f.filename
-            
-            try:
-                # Text / CSV / TSV
-                content_str = content_bytes.decode("utf-8", errors="replace")
-                parsed_rows = parse_csv_or_tsv_content(content_str, filename=filename, f_dist=f_dist, is_gross=is_gross)
-                raw_rows.extend(parsed_rows)
-            except Exception as e:
-                # If error parsing specific file
-                pass
+            content_str = content_bytes.decode("utf-8", errors="replace")
+            file_inputs.append({"filename": f.filename, "content_str": content_str})
+
+        batch_result = smart_parse_files(file_inputs, f_dist=f_dist, is_gross=is_gross)
+        raw_rows.extend(batch_result["rows"])
+        parser_summaries = batch_result.get("file_summaries", [])
 
     # 2. Fallback to sample dataset if selected and no files parsed
     if not raw_rows and sample_dataset:
@@ -667,5 +666,11 @@ async def evaluate_statements(
         payment_tranches=tranches,
         artist_metadata=artist_meta
     )
+
+    # Attach parser provenance so the frontend can show how each file was parsed
+    if isinstance(result, dict) and parser_summaries:
+        result["parser_provenance"] = parser_summaries
+        llm_used = any(s.get("parser_used") == "llm" for s in parser_summaries)
+        result["llm_parser_used"] = llm_used
 
     return result
