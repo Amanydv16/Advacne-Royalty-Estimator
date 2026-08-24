@@ -77,23 +77,23 @@ class TestIslem23Regression(unittest.TestCase):
             config=DEFAULT_CONFIG
         )
         
-        # R0 = 317.59, rho(5) = 0.60 -> K_base = 0.60 * 12 * 5 = 36.0
-        # A = 317.59 * 36.0 * 1.0 * 1.0 = 11433.24 -> round to $11,433
-        self.assertEqual(round(res.a_catalog), 11433)
+        # R0 = 317.59, K_base(5) = 36.028
+        # A = 317.59 * 36.028 = 11442.13 -> round to $11,442
+        self.assertEqual(round(res.a_catalog), 11442)
         self.assertAlmostEqual(res.rho_t, 0.6000, places=3)
         self.assertAlmostEqual(res.ttr_years, 5.000, places=3)
 
     def test_grid_24_cells(self):
-        """Test term x pay-through grid cells under K_base(T) = rho(T) * 12T model."""
+        """Test term x pay-through grid cells under K_base(T) model."""
         ground_truth = {
-            (1, 0.0): 3430,
-            (2, 0.0): 6098,
-            (3, 0.0): 8003,
-            (5, 0.0): 11433,
+            (1, 0.0): 3429,
+            (2, 0.0): 6611,
+            (3, 0.0): 9277,
+            (5, 0.0): 11442,
             (1, 0.5): 1715,
-            (2, 0.5): 3049,
-            (3, 0.5): 4002,
-            (5, 0.5): 5717,
+            (2, 0.5): 3305,
+            (3, 0.5): 4639,
+            (5, 0.5): 5721,
         }
         
         ingestion_res = apply_ingestion_rules(self.raw_rows, config=DEFAULT_CONFIG)

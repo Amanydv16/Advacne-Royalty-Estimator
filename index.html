@@ -124,6 +124,66 @@
               </div>
             </div>
 
+            <!-- Live Artist & Catalogue Preview Panel -->
+            <div id="artistCataloguePanel" class="artist-catalogue-panel" style="display: none;">
+              <div class="catalogue-panel-header">
+                <div class="catalogue-artist-avatar-wrap">
+                  <img id="catalogueArtistAvatar" src="" alt="Artist Profile">
+                  <div class="catalogue-badge-verified" id="catalogueVerifiedDot" title="Verified Artist Profile"><i data-lucide="check"></i></div>
+                </div>
+                <div class="catalogue-artist-meta">
+                  <div class="catalogue-artist-title-row">
+                    <h3 id="catalogueArtistName" class="catalogue-artist-name">Artist Name</h3>
+                    <a id="catalogueSpotifyLink" href="#" target="_blank" rel="noopener noreferrer" class="catalogue-spotify-badge" style="display: none;">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
+                      <span>Spotify Profile</span>
+                    </a>
+                  </div>
+                  <div class="catalogue-tags-row">
+                    <span id="catalogueGenreTag" class="catalogue-tag">Sound Recording</span>
+                    <span id="catalogueFollowersTag" class="catalogue-tag tag-subtle"><i data-lucide="users"></i> <span id="catalogueFollowersVal">Live</span></span>
+                    <span id="catalogueDistributorTag" class="catalogue-tag tag-distributor"><i data-lucide="disc"></i> <span id="catalogueDistributorVal">Detecting Distributor...</span></span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="catalogue-summary-bar">
+                <div class="cat-stat-box">
+                  <span class="cat-stat-label">LIVE TRACKS</span>
+                  <span class="cat-stat-val" id="catStatTracks">--</span>
+                </div>
+                <div class="cat-stat-box">
+                  <span class="cat-stat-label">ALBUMS & SINGLES</span>
+                  <span class="cat-stat-val" id="catStatAlbums">--</span>
+                </div>
+                <div class="cat-stat-box">
+                  <span class="cat-stat-label">ISRC COVERAGE</span>
+                  <span class="cat-stat-val" id="catStatIsrcs">100%</span>
+                </div>
+              </div>
+
+              <!-- Track Explorer Grid -->
+              <div class="catalogue-tracks-wrapper">
+                <div class="catalogue-tracks-header">
+                  <span>LIVE RECORDING CATALOGUE</span>
+                  <span id="catalogueTracksStatus" class="cat-status-loading"><i data-lucide="loader-2" class="spin"></i> Fetching Live Tracks...</span>
+                </div>
+                <div id="catalogueTrackList" class="catalogue-track-list">
+                  <!-- Injected via JavaScript -->
+                </div>
+              </div>
+
+              <!-- Monthly Streams Panel -->
+              <div class="catalogue-tracks-wrapper" id="catalogueMonthlyStreamsWrapper" style="margin-top: 14px;">
+                <div class="catalogue-tracks-header">
+                  <span>MONTHLY STREAMS & HISTORICAL REVENUE</span>
+                  <span id="catalogueStreamsStatus" style="font-size:0.75rem; color:var(--text-dim);">Live Project Data</span>
+                </div>
+                <div id="catalogueMonthlyStreamsList" style="padding:10px 14px; font-size:0.85rem;">
+                  <!-- Injected via JavaScript -->
+                </div>
+              </div>
+            </div>
 
             <button class="btn-primary-purple btn-large" id="stage1NextBtn" onclick="handleStage1Proceed()">
               <span>GET STARTED</span> <i data-lucide="arrow-right"></i>
@@ -357,19 +417,66 @@
 
                 <div class="dropzone-box" id="fileDropzone"
                   onclick="document.getElementById('statementFileInput').click()">
-                  <input type="file" id="statementFileInput" multiple accept=".csv,.tsv,.txt,.xlsx,.xls,.pdf"
+                  <input type="file" id="statementFileInput" multiple accept=".csv,.tsv,.txt,.xlsx,.xls,.pdf,.docx,.png,.jpg,.jpeg"
                     style="display:none;" onchange="handleFileSelection(event)">
                   <div class="dropzone-icon"><i data-lucide="upload-cloud"></i></div>
-                  <div class="dropzone-main-text">Drag and drop or <span class="highlight-link">Browse</span></div>
-                  <div class="dropzone-formats">Formats supported: .csv, .tsv, .xlsx, .xls, .txt, .pdf</div>
+                  <div class="dropzone-main-text">Drag & drop statements or <span class="highlight-link">Browse Files</span></div>
+                  <div class="dropzone-formats">Multimodal Formats: PDF, CSV, XLSX, DOCX, TXT, PNG, JPG (Text & Vision OCR)</div>
                 </div>
 
                 <!-- File Staging Status List -->
                 <div class="uploaded-files-list" id="uploadedFilesList">
                   <div class="empty-files-placeholder" id="emptyFilesNotice">
                     <i data-lucide="file-spreadsheet"></i>
-                    <span>No files uploaded yet. Upload at least 6 months of statements to unlock the Exact Advance
-                      calculation.</span>
+                    <span>No files uploaded yet. Upload at least 6 months of statements to unlock the Exact Advance calculation.</span>
+                  </div>
+                </div>
+
+                <!-- Multimodal LLM Statement Parser Results Hub -->
+                <div id="multimodalParserResultsHub" style="display: none; margin-top: 20px;">
+                  <div class="glass-panel" style="background: rgba(15, 23, 42, 0.7); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 12px; padding: 20px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 16px;">
+                      <h4 style="font-size:1.1rem; font-weight:700; color:#fff; display:flex; align-items:center; gap:8px;">
+                        <i data-lucide="brain" style="color:#c084fc;"></i> Multimodal Royalty Statement Breakdown
+                      </h4>
+                      <span id="parserStatusBadge" class="badge-env" style="background:rgba(16,185,129,0.2); color:#34d399; border:1px solid rgba(16,185,129,0.3); padding:4px 10px;">✓ PARSED</span>
+                    </div>
+
+                    <!-- Metadata & Reconciliation Summary Grid -->
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:16px;">
+                      <div style="background:rgba(255,255,255,0.03); padding:12px; border-radius:8px;">
+                        <div style="font-size:0.75rem; color:var(--text-dim);">Statement Currency</div>
+                        <div style="font-size:1.1rem; font-weight:700; color:#38bdf8;" id="parserMetaCurrency">USD</div>
+                      </div>
+                      <div style="background:rgba(255,255,255,0.03); padding:12px; border-radius:8px;">
+                        <div style="font-size:0.75rem; color:var(--text-dim);">Calculated Net Total</div>
+                        <div style="font-size:1.1rem; font-weight:700; color:#34d399;" id="parserCalculatedNet">$0.00</div>
+                      </div>
+                      <div style="background:rgba(255,255,255,0.03); padding:12px; border-radius:8px;">
+                        <div style="font-size:0.75rem; color:var(--text-dim);">Reconciliation Status</div>
+                        <div style="font-size:1.1rem; font-weight:700; color:#a855f7;" id="parserReconciliationStatus">Reconciled</div>
+                      </div>
+                    </div>
+
+                    <!-- Warnings & Flags Box -->
+                    <div id="parserWarningsBox" style="display:none; background:rgba(234,179,8,0.1); border:1px solid rgba(234,179,8,0.3); padding:10px 14px; border-radius:8px; margin-bottom:16px; color:#fde047; font-size:0.85rem;"></div>
+
+                    <!-- Monthly Royalty Breakdown Table -->
+                    <div class="table-container">
+                      <div style="font-size:0.85rem; font-weight:600; color:var(--text-dim); margin-bottom:8px;">Normalized Monthly Royalty Breakdown</div>
+                      <table class="data-table" id="monthlyBreakdownTable">
+                        <thead>
+                          <tr>
+                            <th>Earning Month</th>
+                            <th>Net Royalty Earnings</th>
+                            <th>MoM Growth Trend</th>
+                            <th>Active Tracks</th>
+                            <th>Primary DSP Source</th>
+                          </tr>
+                        </thead>
+                        <tbody id="monthlyBreakdownTableBody"></tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
 
@@ -429,7 +536,54 @@
               </div>
             </div>
 
+            <!-- ================= ALL-YEARS ESTIMATION & FULL ADVANCE CHART ================= -->
+            <div class="glass-panel multi-year-panel">
+              <div class="multi-year-header">
+                <div>
+                  <h3 class="panel-section-title"><i data-lucide="trending-up"></i> Multi-Year Advance Horizon (1Y – 5Y Full Estimates)</h3>
+                  <p class="panel-subtitle-text">Deterministic valuation sizing across all contract term lengths with active recoupment curves and risk discounts.</p>
+                </div>
+                <div class="term-active-pill" id="currentSelectedTermBadge">Selected: 3 Years</div>
+              </div>
 
+              <!-- 5-Card Year Selector Grid -->
+              <div class="years-estimation-grid" id="yearsEstimationGrid"></div>
+
+              <!-- Chart.js Full Multi-Year Comparison Curve -->
+              <div class="chart-wrapper-card">
+                <div class="chart-header-row">
+                  <span class="chart-legend-title">Advance Valuation Curve by Term ($ USD)</span>
+                  <div class="chart-legend-pills">
+                    <span class="legend-dot-pill total"><span class="dot"></span> Total Offer</span>
+                    <span class="legend-dot-pill catalog"><span class="dot"></span> Catalogue A_cat</span>
+                    <span class="legend-dot-pill new-release"><span class="dot"></span> New Release A_new</span>
+                  </div>
+                </div>
+                <div class="chart-canvas-container" style="position: relative; height: 280px; width: 100%;">
+                  <canvas id="multiYearAdvanceChart"></canvas>
+                </div>
+              </div>
+
+              <!-- Full All-Years Breakdown Table -->
+              <div class="table-container" style="margin-top: 24px;">
+                <div class="table-title">Full Multi-Year Term Comparison Matrix</div>
+                <table class="data-table" id="multiYearTable">
+                  <thead>
+                    <tr>
+                      <th>Contract Term</th>
+                      <th>Total Advance</th>
+                      <th>Catalogue Component</th>
+                      <th>New-Release Component</th>
+                      <th>Active Multiple K(T)</th>
+                      <th>Recoupment Split ρ</th>
+                      <th>Est. Recoupment Time (TTR)</th>
+                      <th>Risk Discount</th>
+                    </tr>
+                  </thead>
+                  <tbody id="multiYearTableBody"></tbody>
+                </table>
+              </div>
+            </div>
 
             <!-- 2-Column Analytics Grid -->
             <div class="analytics-two-col-grid">
@@ -456,16 +610,17 @@
                   </div>
                 </div>
 
-                <!-- Per-Song Revenue Share Table -->
+                <!-- Per-Song Revenue Share & Valuation Allocation Table -->
                 <div class="table-container">
-                  <div class="table-title">Top Earning Recordings</div>
+                  <div class="table-title">Full Artist Catalogue & Track Breakdown</div>
                   <table class="data-table" id="topSongsTable">
                     <thead>
                       <tr>
-                        <th>Track Title</th>
-                        <th>Share</th>
-                        <th>Monthly Trend</th>
-                        <th>Severity</th>
+                        <th>Track / Recording</th>
+                        <th>ISRC</th>
+                        <th>Catalog Share</th>
+                        <th>Monthly Earnings</th>
+                        <th>Advance Allocation</th>
                       </tr>
                     </thead>
                     <tbody id="topSongsTableBody"></tbody>

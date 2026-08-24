@@ -127,6 +127,49 @@ class ValuationEngine:
         a_new = round(new_release_res.a_new, 2) if (new_release_res and new_release_res.is_available and new_release_res.a_new is not None) else None
         a_total = round(a_catalog + (a_new or 0.0), 2)
 
+        # Calculate All-Year Estimations (1Y, 2Y, 3Y, 4Y, 5Y) for comprehensive chart & comparison
+        multi_year_estimates = []
+        for t_year in [1, 2, 3, 4, 5]:
+            cat_t = compute_catalog_advance(
+                usable_rows=ingestion_res.usable_rows,
+                usable_months=ingestion_res.usable_months,
+                monthly_totals=ingestion_res.monthly_totals,
+                term=t_year,
+                pay_through=pay_through,
+                post_recoup_share=post_recoup_share,
+                r_win=r_win,
+                config=self.config
+            )
+            nr_t = compute_new_release_advance(
+                usable_rows=ingestion_res.usable_rows,
+                usable_months=ingestion_res.usable_months,
+                r0=cat_t.r0,
+                n_contracted=singles_contracted,
+                term=cat_t.term,
+                rho_t=cat_t.rho_t,
+                config=self.config
+            )
+            a_cat_t = round(cat_t.a_catalog, 2)
+            a_nr_t = round(nr_t.a_new, 2) if (nr_t and nr_t.is_available and nr_t.a_new is not None) else 0.0
+            a_tot_t = round(a_cat_t + a_nr_t, 2)
+
+            multi_year_estimates.append({
+                "term_years": t_year,
+                "label": f"{t_year} Year{'s' if t_year > 1 else ''}",
+                "a_catalog": a_cat_t,
+                "a_new": a_nr_t,
+                "a_total": a_tot_t,
+                "k_base": round(cat_t.k_base, 3),
+                "k_active": round(cat_t.k_t, 3),
+                "rho_t_pct": round(cat_t.rho_t * 100, 1),
+                "ttr_years": round(cat_t.ttr_years, 2),
+                "risk_discount_pct": round(cat_t.risk_discount * 100, 2),
+                "new_release_range": {
+                    "low": round(nr_t.range_lo, 2) if (nr_t and nr_t.range_lo) else None,
+                    "high": round(nr_t.range_hi, 2) if (nr_t and nr_t.range_hi) else None
+                } if (nr_t and nr_t.is_available) else None
+            })
+
         return {
             "success": True,
             "artist": artist_metadata or {"name": "Artist"},
@@ -146,6 +189,7 @@ class ValuationEngine:
                     "high": round(new_release_res.range_hi, 2) if new_release_res and new_release_res.range_hi else None
                 } if new_release_res and new_release_res.is_available else None
             },
+            "multi_year_estimates": multi_year_estimates,
             "catalog_analytics": {
                 "r0": round(catalog_res.r0, 2),
                 "r0_last": round(catalog_res.r0_last, 2),
@@ -156,7 +200,14 @@ class ValuationEngine:
                 "top_1_share_pct": round(catalog_res.top_1_share * 100, 1),
                 "top_5_share_pct": round(catalog_res.top_5_share * 100, 1),
                 "risk_discount_pct": round(catalog_res.risk_discount * 100, 2),
-                "top_songs": catalog_res.per_song_decay[:10]
+                "top_songs": [
+                    {
+                        **s,
+                        "monthly_rev": round(s.get("share", 0.0) * catalog_res.r0, 2),
+                        "advance_allocation": round(s.get("share", 0.0) * a_catalog, 2)
+                    }
+                    for s in catalog_res.per_song_decay
+                ]
             },
             "new_release_analytics": {
                 "observable_releases_count": new_release_res.observable_releases_count,

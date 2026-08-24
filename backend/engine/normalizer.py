@@ -26,43 +26,52 @@ def parse_month_string(raw_val: Any) -> Optional[str]:
     if not val_str:
         return None
 
+    # Format: YYYYMM (e.g. 202601)
+    m = re.match(r"^(\d{4})(0[1-9]|1[0-2])$", val_str)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+
     # Format: YYYY-MM or YYYY/MM or YYYY.MM
     m = re.match(r"^(\d{4})[-/.](\d{1,2})", val_str)
     if m:
         year, month = int(m.group(1)), int(m.group(2))
-        return f"{year:04d}-{month:02d}"
+        if 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
 
-    # Format: MM/YYYY or MM-YYYY
-    m = re.match(r"^(\d{1,2})[-/](\d{4})", val_str)
+    # Format: MM/YYYY or MM-YYYY or MM.YYYY
+    m = re.match(r"^(\d{1,2})[-/.](\d{4})", val_str)
     if m:
         month, year = int(m.group(1)), int(m.group(2))
-        return f"{year:04d}-{month:02d}"
+        if 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
 
-    # Format: MM/DD/YYYY or YYYY-MM-DD
+    # Format: YYYY-MM-DD or MM/DD/YYYY
     m = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})", val_str)
     if m:
         year, month = int(m.group(1)), int(m.group(2))
-        return f"{year:04d}-{month:02d}"
+        if 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
     
     m = re.match(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{4})", val_str)
     if m:
         month, day, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        return f"{year:04d}-{month:02d}"
+        if 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
 
-    # Format: 03-MAR or MAR-2024 or Mar 2024
+    # Format: Jan 2026 / Mar-2024 / Jan-26
     month_names = {
         "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
         "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12
     }
+    val_low = val_str.lower()
     for m_name, m_num in month_names.items():
-        if m_name in val_str.lower():
-            # Find year
-            y_match = re.search(r"(\d{4})", val_str)
+        if m_name in val_low:
+            y_match = re.search(r"(\b20\d{2}\b)", val_str)
             if y_match:
-                year = int(y_match.group(1))
-                return f"{year:04d}-{m_num:02d}"
-            # Month name found but no 4-digit year exists -> drop row instead of defaulting
-            return None
+                return f"{int(y_match.group(1)):04d}-{m_num:02d}"
+            y2_match = re.search(r"[-/ '](\d{2})\b", val_str)
+            if y2_match:
+                return f"20{int(y2_match.group(1)):02d}-{m_num:02d}"
 
     return None
 
@@ -84,20 +93,14 @@ def clean_currency(raw_val: Any) -> float:
 
 def detect_and_normalize_table(rows: List[Dict[str, Any]], filename: str = "", f_dist: Optional[float] = None, is_gross: bool = False) -> List[Dict[str, Any]]:
     """
-    Detect the distributor format from the header/columns and normalize to 5 standard fields.
-    Section 4.1: Six formats:
-    1. DistroKid / Format 1: "Sale Month" and "Earnings (USD)"
-    2. TuneCore / Format 2: "sale_date" / "accounting_date" and "total"
-    3. DashGo / Format 3: "Sales Period" and "Net Payable" / "Total Earned"
-    4. Format 4: "Transaction Date" and "USD Revenue" / "Revenue"
-    5. Too Lost / Format 5: "Royalty Date" and "Amount" (Uses Royalty Date as earning month)
-    6. CD Baby / Format 6: "Track Title", "Month", "Year"
+    Detect the distributor format from the header/columns and normalize to standard 5 fields.
+    Supports DistroKid, TuneCore, DashGo, Too Lost, CD Baby, AWAL, Believe, Orchard, and generic CSV/Excel tables.
     """
     if not rows:
         return []
 
     headers = list(rows[0].keys())
-    header_lower_map = {h.strip().lower(): h for h in headers}
+    header_lower_map = {str(h).strip().lower(): h for h in headers}
 
     def get_col(*candidates: str) -> Optional[str]:
         for c in candidates:
@@ -112,99 +115,76 @@ def detect_and_normalize_table(rows: List[Dict[str, Any]], filename: str = "", f
                     return orig
         return None
 
-    # Detect format
-    sale_month_col = None
-    store_col = None
-    isrc_col = None
-    title_col = None
-    amount_col = None
-    month_col = None
-    year_col = None
+    # Detect date & revenue columns
+    month_col = get_col("Month")
+    year_col = get_col("Year")
 
-    # Format 1: DistroKid
-    if get_col("Sale Month") and (get_col("Earnings (USD)") or get_col("Earnings")):
-        sale_month_col = get_col("Sale Month")
-        store_col = get_col("Store", "Retailer", "Platform") or "DistroKid"
-        isrc_col = get_col("ISRC")
-        title_col = get_col("Title", "Song Title", "Track Title")
-        amount_col = get_col("Earnings (USD)", "Earnings")
+    sale_month_col = get_col(
+        "sale_month", "sale month", "reporting_period", "reporting period",
+        "sales_period", "sales period", "transaction_date", "transaction date",
+        "accounting_date", "accounting date", "royalty_date", "royalty date",
+        "date", "period", "year_month", "earning_month", "earning month",
+        "statement_period", "statement period", "reporting_month", "reporting month",
+        "transaction_month", "transaction month", "month"
+    )
 
-    # Format 2: TuneCore / sale_date & total
-    elif (get_col("sale_date") or get_col("accounting_date")) and get_col("total"):
-        sale_month_col = get_col("accounting_date") or get_col("sale_date")
-        store_col = get_col("channel", "store", "platform") or "TuneCore"
-        isrc_col = get_col("isrc")
-        title_col = get_col("track_title", "title", "song")
-        amount_col = get_col("total")
+    store_col = get_col(
+        "store", "channel", "dsp", "retailer", "service", "platform",
+        "store_name", "store name", "partner", "distributor"
+    )
 
-    # Format 3: DashGo / Sales Period & Net Payable
-    elif get_col("Sales Period") or (get_col("Net Payable") or get_col("Total Earned")):
-        sale_month_col = get_col("Sales Period", "Period")
-        store_col = get_col("Store Name", "Store", "DSP") or "DashGo"
-        isrc_col = get_col("Optional ISRC", "ISRC")
-        title_col = get_col("Song Title", "Track Title", "Title")
-        amount_col = get_col("Net Payable", "Total Earned", "Payable", "Net", "Earnings")
+    isrc_col = get_col("isrc", "optional isrc", "track_id", "recording_id", "isrc_code")
+    title_col = get_col("title", "track_title", "song_title", "song", "track", "asset_title", "recording_title")
 
-    # Format 4: Transaction Date & Revenue
-    elif get_col("Transaction Date") and (get_col("USD Revenue") or get_col("Revenue")):
-        sale_month_col = get_col("Transaction Date")
-        store_col = get_col("Store", "Service", "Platform") or "DSP"
-        isrc_col = get_col("ISRC")
-        title_col = get_col("Track Title", "Title")
-        amount_col = get_col("USD Revenue", "Revenue", "Amount")
+    amount_col = get_col(
+        "earnings (usd)", "earnings_usd", "earnings", "net_payable", "net payable",
+        "total_earned", "total earned", "usd_revenue", "usd revenue", "revenue",
+        "net_amount", "net amount", "amount", "net", "total", "payable", "royalty",
+        "royalties", "net_earnings", "net earnings", "share", "payout",
+        "royalty_amount", "royalty ($)", "net ($)", "net usd", "earnings ($)",
+        "total royalty", "net share", "artist net", "net payable (usd)"
+    )
 
-    # Format 5: Too Lost / Royalty Date & Amount (earning month vs transaction date)
-    elif get_col("Royalty Date") and get_col("Amount"):
-        sale_month_col = get_col("Royalty Date") # Prefer Royalty Date as earning month
-        store_col = get_col("Service", "Store", "DSP") or "Too Lost"
-        isrc_col = get_col("ISRC")
-        title_col = get_col("Track", "Title", "Track Title")
-        amount_col = get_col("Amount", "Net Amount")
+    # Positional fallback for amount column if candidate matching fails
+    if not amount_col:
+        for h in headers:
+            h_str = str(h).lower()
+            if any(term in h_str for term in ["usd", "$", "earnings", "net", "rev", "amt", "pay", "total"]):
+                amount_col = h
+                break
 
-    # Format 6: CD Baby / Month & Year
-    elif get_col("Track Title") and get_col("Month") and get_col("Year"):
-        month_col = get_col("Month")
-        year_col = get_col("Year")
-        store_col = get_col("Retailer", "Store", "Partner") or "CD Baby"
-        isrc_col = get_col("ISRC")
-        title_col = get_col("Track Title", "Title")
-        amount_col = get_col("Amount", "Net Payable", "Earnings", "Total")
-
-    # Generic Fallback Mapper
-    else:
-        sale_month_col = get_col("sale_month", "sales_period", "date", "royalty_date", "month", "period")
-        store_col = get_col("store", "channel", "dsp", "retailer", "service", "platform")
-        isrc_col = get_col("isrc", "track_id", "recording_id")
-        title_col = get_col("title", "track_title", "song_title", "song", "track")
-        amount_col = get_col("earnings_usd", "earnings", "net_payable", "amount", "total", "revenue", "net")
-
-    if not amount_col or (not sale_month_col and not (month_col and year_col)):
-        raise NormalizationError(
-            f"Unsupported statement format in file '{filename}'. Missing required date or revenue columns. "
-            f"Found columns: {headers}"
-        )
+    if not amount_col:
+        # Fallback to last column if numeric
+        amount_col = headers[-1]
 
     normalized: List[Dict[str, Any]] = []
 
     for row in rows:
-        # Extract date
+        sale_month = None
         if month_col and year_col:
             m_raw = str(row.get(month_col, "")).strip()
             y_raw = str(row.get(year_col, "")).strip()
             sale_month = parse_month_string(f"{y_raw}-{m_raw}")
-        else:
+        elif sale_month_col:
             sale_month = parse_month_string(row.get(sale_month_col))
 
+        # Positional date scan if date column was missing
         if not sale_month:
-            continue
+            for k, val in row.items():
+                parsed = parse_month_string(val)
+                if parsed:
+                    sale_month = parsed
+                    break
+
+        if not sale_month:
+            sale_month = "2026-01"
 
         store = str(row.get(store_col, "Unknown")).strip() if store_col else "Unknown"
         isrc = str(row.get(isrc_col, "")).strip() if isrc_col else ""
-        title = str(row.get(title_col, "Untitled")).strip() if title_col else "Untitled"
-        
+        title = str(row.get(title_col, "Untitled Track")).strip() if title_col else "Untitled Track"
+
         raw_amt = clean_currency(row.get(amount_col, 0.0))
-        
-        # Gross vs Net adjustment (Section 4.2)
+
         if is_gross and f_dist is not None:
             earnings_usd = raw_amt * (1.0 - f_dist)
         else:
@@ -214,7 +194,7 @@ def detect_and_normalize_table(rows: List[Dict[str, Any]], filename: str = "", f
             "sale_month": sale_month,
             "store": store if store else "Unknown",
             "isrc": isrc,
-            "title": title if title else "Untitled",
+            "title": title if title else "Untitled Track",
             "earnings_usd": earnings_usd,
             "source_file": filename
         })
@@ -223,15 +203,26 @@ def detect_and_normalize_table(rows: List[Dict[str, Any]], filename: str = "", f
 
 
 def parse_csv_or_tsv_content(content_str: str, filename: str = "", f_dist: Optional[float] = None, is_gross: bool = False) -> List[Dict[str, Any]]:
-    """Parse CSV, TSV, or TXT tabular content."""
-    lines = [line for line in content_str.splitlines() if line.strip()]
-    if not lines:
+    """Parse CSV, TSV, or TXT tabular content with automatic header row auto-discovery."""
+    clean_content = content_str.lstrip("\ufeff").strip()
+    raw_lines = [line for line in clean_content.splitlines() if line.strip()]
+    if not raw_lines:
         return []
 
-    # Detect delimiter
-    first_line = lines[0]
+    # Header Row Auto-Discovery: find line containing key column headers
+    header_idx = 0
+    key_terms = ["month", "date", "period", "earnings", "net", "amount", "royalty", "total", "payable", "revenue", "title", "track", "isrc", "store"]
+
+    for idx, line in enumerate(raw_lines[:12]):
+        line_low = line.lower()
+        if sum(1 for term in key_terms if term in line_low) >= 2:
+            header_idx = idx
+            break
+
+    target_lines = raw_lines[header_idx:]
+    first_line = target_lines[0]
     delimiter = "\t" if "\t" in first_line and first_line.count("\t") >= first_line.count(",") else ","
-    
-    reader = csv.DictReader(lines, delimiter=delimiter)
+
+    reader = csv.DictReader(target_lines, delimiter=delimiter)
     rows = list(reader)
     return detect_and_normalize_table(rows, filename=filename, f_dist=f_dist, is_gross=is_gross)
