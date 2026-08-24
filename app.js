@@ -379,9 +379,10 @@ function renderSpotifySearchResults(items, query = '') {
 
   // Check if an exact match exists in the returned items
   const hasExact = (items || []).some(a => (a.name || '').toLowerCase().replace(/[^a-z0-9]/g, '') === qNorm);
+  const isUrlOrUri = safeQuery.includes('spotify.com') || safeQuery.includes('spotify:artist:') || /^[A-Za-z0-9]{22}$/.test(safeQuery);
 
-  // If query is present and not an exact match, append option for custom small/indie artist
-  if (safeQuery && !hasExact) {
+  // If query is present, not a URL/URI, and not an exact match, append option for custom small/indie artist
+  if (safeQuery && !hasExact && !isUrlOrUri) {
     const customId = `indie_${Math.abs(hashString(safeQuery))}`;
     const customCard = `
       <div class="artist-suggestion-card custom-artist-option" style="background: rgba(147, 51, 234, 0.08); border-top: 1px solid rgba(255,255,255,0.08);" onclick="selectArtist('${escapeHtml(safeQuery)}', '', '${customId}', 'Independent Artist', '')">
@@ -416,23 +417,54 @@ function renderSpotifySearchResults(items, query = '') {
 
 
 async function selectArtist(name, image, artistId, genreText = 'Artist – Sound Recording', spotifyUrl = '') {
-  const defaultImg = image || 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces';
+  let cleanName = (name || '').trim();
+  let cleanImg = image || '';
+  let cleanId = artistId || '';
+  let cleanUrl = spotifyUrl || '';
+
+  // Auto-detect and resolve Spotify URLs, URIs, or 22-char raw Spotify IDs
+  const sMatch = (cleanName + " " + cleanId + " " + cleanUrl).match(/(?:artist\/|spotify:artist:|^)([A-Za-z0-9]{22})/i);
+  if (cleanName.includes('spotify.com') || cleanName.includes('spotify:artist:') || (sMatch && sMatch[1].length === 22)) {
+    const extractedId = sMatch ? sMatch[1] : cleanId;
+    cleanId = extractedId;
+    cleanUrl = `https://open.spotify.com/artist/${extractedId}`;
+
+    // Resolve exact artist name & photo via Spotify oEmbed API
+    try {
+      const oeRes = await fetch(`https://open.spotify.com/oembed?url=https://open.spotify.com/artist/${extractedId}`);
+      if (oeRes.ok) {
+        const oeData = await oeRes.json();
+        if (oeData.title) {
+          cleanName = oeData.title;
+          if (oeData.thumbnail_url) cleanImg = oeData.thumbnail_url;
+        }
+      }
+    } catch (e) {
+      console.warn('[Spotify oEmbed Notice]', e);
+    }
+
+    if (cleanName.includes('spotify.com') || cleanName.includes('spotify:artist:')) {
+      cleanName = 'Verified Spotify Artist';
+    }
+  }
+
+  const defaultImg = cleanImg || 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces';
   
   state.selectedArtist = {
-    name: name,
+    name: cleanName,
     image: defaultImg,
-    spotifyId: artistId,
+    spotifyId: cleanId,
     genres: [genreText],
-    spotifyUrl: spotifyUrl,
+    spotifyUrl: cleanUrl,
     catalogTracks: []
   };
 
   // Update sidebar & chip
-  document.getElementById('sidebarArtistName').innerText = name;
+  document.getElementById('sidebarArtistName').innerText = cleanName;
   document.getElementById('sidebarArtistMeta').innerText = genreText;
   document.getElementById('sidebarArtistImg').src = defaultImg;
 
-  document.getElementById('chipArtistName').innerText = name;
+  document.getElementById('chipArtistName').innerText = cleanName;
   document.getElementById('chipArtistImg').src = defaultImg;
 
   document.getElementById('spotifySearchResults').style.display = 'none';
@@ -446,7 +478,7 @@ async function selectArtist(name, image, artistId, genreText = 'Artist – Sound
   const panel = document.getElementById('artistCataloguePanel');
   if (panel) {
     panel.style.display = 'block';
-    document.getElementById('catalogueArtistName').innerText = name;
+    document.getElementById('catalogueArtistName').innerText = cleanName;
     document.getElementById('catalogueArtistAvatar').src = defaultImg;
     document.getElementById('catalogueGenreTag').innerText = genreText;
     document.getElementById('catalogueDistributorVal').innerText = 'Detecting Distributor...';
@@ -457,8 +489,8 @@ async function selectArtist(name, image, artistId, genreText = 'Artist – Sound
     
     const spotLink = document.getElementById('catalogueSpotifyLink');
     if (spotLink) {
-      if (spotifyUrl) {
-        spotLink.href = spotifyUrl;
+      if (cleanUrl) {
+        spotLink.href = cleanUrl;
         spotLink.style.display = 'inline-flex';
       } else {
         spotLink.style.display = 'none';
@@ -468,7 +500,7 @@ async function selectArtist(name, image, artistId, genreText = 'Artist – Sound
   }
 
   // Fetch full live artist profile, tracks, and detect distributor
-  fetchArtistDetails(artistId, name);
+  fetchArtistDetails(cleanId, cleanName);
 }
 
 async function fetchArtistDetails(artistId, artistName) {
@@ -748,6 +780,16 @@ async function handleStage1Proceed() {
         lucide.createIcons();
       }
 
+      // Check if inputVal is a Spotify URL / URI / ID
+      const sMatch = inputVal.match(/(?:artist\/|spotify:artist:|^)([A-Za-z0-9]{22})/i);
+      if (inputVal.includes('spotify.com') || inputVal.includes('spotify:artist:') || (sMatch && sMatch[1].length === 22)) {
+        const sId = sMatch ? sMatch[1] : inputVal;
+        await selectArtist(inputVal, '', sId, 'Verified Spotify Artist', `https://open.spotify.com/artist/${sId}`);
+        if (nextBtn) { nextBtn.innerHTML = origHtml; nextBtn.disabled = false; }
+        goToStage(2);
+        return;
+      }
+
       try {
         const res = await fetch(`/api/spotify/resolve?q=${encodeURIComponent(inputVal)}`);
         if (res.ok) {
@@ -773,7 +815,7 @@ async function handleStage1Proceed() {
       }
 
       // Graceful fallback
-      selectArtist(inputVal, 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces', `spotify:artist:${Math.abs(hashString(inputVal))}`);
+      await selectArtist(inputVal, 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces', `spotify:artist:${Math.abs(hashString(inputVal))}`);
       goToStage(2);
     } else {
       alert('Please type or select an artist/label name first.');
