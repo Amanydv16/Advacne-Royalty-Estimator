@@ -300,24 +300,32 @@ class SpotifyClient:
 
     # Regex patterns for Spotify IDs, URIs, and URLs
     SPOTIFY_ID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
-    SPOTIFY_ARTIST_URL_RE = re.compile(r"open\.spotify\.com/(?:intl-[a-z]+/)?artist/([A-Za-z0-9]{22})")
-    SPOTIFY_URI_RE = re.compile(r"spotify:artist:([A-Za-z0-9]{22})")
     MB_USER_AGENT = "MoneTunes/2.0 (contact@monetunes.com)"
 
     @classmethod
     def extract_spotify_id(cls, text: str) -> Optional[str]:
-        """Extract a 22-character Spotify ID from a raw ID, URI, or URL."""
+        """Extract a 22-character Spotify ID from any raw ID, URI, or Spotify URL variant."""
         if not text:
             return None
         t = text.strip()
         if cls.SPOTIFY_ID_RE.match(t):
             return t
-        m = cls.SPOTIFY_ARTIST_URL_RE.search(t)
+        
+        # open.spotify.com URLs (handles intl-xx, query strings ?si=..., etc.)
+        m = re.search(r"open\.spotify\.com/(?:[a-z]{2}(?:-[a-z]{2,4})?/)?(?:intl-[^/]+/)?artist/([A-Za-z0-9]{22})", t, re.IGNORECASE)
         if m:
             return m.group(1)
-        m = cls.SPOTIFY_URI_RE.search(t)
+
+        # spotify:artist:ID
+        m = re.search(r"spotify:artist:([A-Za-z0-9]{22})", t, re.IGNORECASE)
         if m:
             return m.group(1)
+
+        # artist/ID string
+        m = re.search(r"artist/([A-Za-z0-9]{22})", t, re.IGNORECASE)
+        if m:
+            return m.group(1)
+
         return None
 
     def search_artists(self, query: str, limit: int = 25) -> List[Dict[str, Any]]:
@@ -344,16 +352,37 @@ class SpotifyClient:
         # Case 0: Direct Spotify ID, URI, or URL
         direct_sid = self.extract_spotify_id(q)
         if direct_sid:
+            api_artist = self._execute_request(f"https://api.spotify.com/v1/artists/{direct_sid}")
+            if api_artist and api_artist.get("name"):
+                img_url = self.select_best_image_320(api_artist.get("images"))
+                res = [{
+                    "id": direct_sid,
+                    "spotify_id": direct_sid,
+                    "name": api_artist.get("name"),
+                    "followers": api_artist.get("followers", {}).get("total", 500000),
+                    "popularity": api_artist.get("popularity", 75),
+                    "genres": api_artist.get("genres", ["sound recording"]),
+                    "imageUrl": img_url,
+                    "image_url": img_url,
+                    "verified": True,
+                    "spotifyUrl": f"https://open.spotify.com/artist/{direct_sid}",
+                    "source": "spotify"
+                }]
+                with self._cache_lock:
+                    self._search_cache[cache_key] = (now + 600.0, res)
+                return res
+
             direct_profile = self.fetch_oembed_profile(direct_sid)
             if direct_profile:
                 res = [{
                     "id": direct_sid,
+                    "spotify_id": direct_sid,
                     "name": direct_profile.get("name") or q,
                     "followers": 500000,
-                    "monthlyListeners": self.estimate_monthly_listeners(500000, 75),
                     "popularity": 75,
                     "genres": ["sound recording"],
                     "imageUrl": direct_profile.get("imageUrl", ""),
+                    "image_url": direct_profile.get("imageUrl", ""),
                     "verified": True,
                     "spotifyUrl": f"https://open.spotify.com/artist/{direct_sid}",
                     "source": "spotify"
