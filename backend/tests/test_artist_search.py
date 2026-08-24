@@ -28,8 +28,9 @@ class TestArtistSearch(unittest.TestCase):
         results = spotify_client.search_artists("Sam")
         self.assertTrue(len(results) > 0)
         top_name = results[0]["name"]
+        norm_top = spotify_client.normalize_text(top_name)
         self.assertTrue(
-            "sam" in top_name.lower() or "sammy" in top_name.lower(),
+            "sam" in norm_top or "sammy" in norm_top,
             f"Top result for 'Sam' should contain 'sam', got {top_name!r}"
         )
 
