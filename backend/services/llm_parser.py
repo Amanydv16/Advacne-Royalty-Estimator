@@ -32,7 +32,9 @@ try:
 except Exception:
     SSL_CONTEXT = None
 
+from decimal import Decimal, InvalidOperation
 from backend.services.preprocessor import extract_content_from_file, sample_content_for_llm
+from backend.engine.normalizer import clean_decimal
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +54,7 @@ class RoyaltySourceDetail(BaseModel):
     territory: Optional[str] = "WW"
     royalty_type: Optional[str] = "Sound Recording"
     amount: float = 0.0
+    amount_str: str = "0.00"
 
 
 class MonthlyBreakdownItem(BaseModel):
@@ -65,16 +68,32 @@ class MonthlyBreakdownItem(BaseModel):
     sources: List[RoyaltySourceDetail] = Field(default_factory=list)
 
 
+class MonthlyEarningProvenance(BaseModel):
+    source_file: str = ""
+    page: Optional[int] = 1
+    source_row: Optional[int] = None
+    source_column: Optional[str] = ""
+    source_value: Optional[str] = ""
+
+
+class MonthlyEarningItem(BaseModel):
+    month: str  # YYYY-MM
+    amount: str  # Exact string representation e.g. "172.21"
+    currency: str = "USD"
+    provenance: MonthlyEarningProvenance = Field(default_factory=MonthlyEarningProvenance)
+
+
 class StatementTotals(BaseModel):
     gross: Optional[float] = None
     net: float = 0.0
+    net_str: str = "0.00"
 
 
 class ReconciliationResult(BaseModel):
     status: str = "reconciled"  # reconciled | mismatch | unverified
-    statement_total: Optional[float] = None
-    calculated_total: float = 0.0
-    difference: float = 0.0
+    statement_total: Optional[Any] = None
+    calculated_total: Any = "0.00"
+    difference: Any = "0.00"
 
 
 class ProvenanceRecord(BaseModel):
@@ -91,6 +110,7 @@ class ProvenanceRecord(BaseModel):
 class NormalizedRoyaltyResult(BaseModel):
     status: str = "parsed"  # parsed | parsed_with_warnings | needs_review | failed
     statement_metadata: StatementMetadata
+    monthly_earnings: List[MonthlyEarningItem] = Field(default_factory=list)
     monthly_breakdown: List[MonthlyBreakdownItem] = Field(default_factory=list)
     totals: StatementTotals
     reconciliation: ReconciliationResult
@@ -270,15 +290,17 @@ def detect_currency(text: str) -> str:
 
 MULTIMODAL_EXTRACTION_SYSTEM = """You are an expert music financial analyst and multimodal royalty statement parser.
 
-Extract statement metadata, monthly royalty breakdowns, statement totals, and granular revenue records from the provided document.
+Extract statement metadata, monthly royalty earnings, statement totals, and granular revenue records from the provided document.
 
-CRITICAL RULES:
-1. NEVER HALLUCINATE OR ESTIMATE MISSING VALUES. If a field is not present in the document, set it to null.
-2. DO NOT ASSUME ZERO unless the document explicitly shows zero.
-3. EXTRACT ALL EARNING MONTHS (sale_month in YYYY-MM format).
-4. PRESERVE PLATFORM NAMES (Spotify, Apple Music, Amazon, YouTube, Deezer, etc.).
-5. DO NOT CONVERT CURRENCIES silently. Detect the primary currency code (USD, EUR, GBP, etc.).
-6. Extract statement totals if declared in the summary section.
+CRITICAL FINANCIAL EXTRACTION RULES:
+1. PRESERVE EVERY MONETARY VALUE EXACTLY AS WRITTEN IN SOURCE DOCUMENT. Never round, approximate, truncate, floor, or ceiling financial amounts. Return numbers as exact strings (e.g., "172.21", "1245.67", "0.05").
+2. DO NOT CONFUSE REVENUE TYPES. Extract the artist's actual net royalty payable / net earnings. Do not select gross revenue, tax, withholding, fees, or account balances by mistake.
+3. PREFER EXPLICIT MONTHLY SUMMARY TOTALS. If the statement provides an explicit monthly summary table (e.g., Jan 2026: 172.21), extract those explicit monthly totals directly into `monthly_earnings`.
+4. PREVENT DOUBLE COUNTING. Do not sum summary rows, subtotal rows, or grand total rows together with detail transaction rows. Mark summary/subtotal/total rows with `"is_summary_row": true`.
+5. EXTRACT ALL EARNING MONTHS in YYYY-MM format (e.g., "2026-01").
+6. DO NOT FABRICATE MISSING DATA. If a month is absent from the document, do not invent it or set it to 0. Set missing fields to null.
+7. PRESERVE CURRENCY. Detect the primary 3-letter ISO currency code (USD, EUR, GBP, CAD, AUD, INR, JPY).
+8. PROVIDE EXACT SOURCE PROVENANCE. Include page, source_row, source_column, and source_value for every extracted monthly value.
 
 Respond strictly in valid JSON matching this schema:
 {
@@ -286,27 +308,41 @@ Respond strictly in valid JSON matching this schema:
     "artist": string | null,
     "label": string | null,
     "period": string | null,
-    "currency": "USD" | "EUR" | "GBP" | string,
-    "statement_total_declared": number | null
+    "currency": "USD" | "EUR" | "GBP" | "CAD" | "AUD" | "INR" | "JPY" | string,
+    "statement_total_declared": string | null
   },
+  "monthly_earnings": [
+    {
+      "month": "YYYY-MM",
+      "amount": string,
+      "currency": string,
+      "provenance": {
+        "page": number | null,
+        "source_row": number | null,
+        "source_column": string | null,
+        "source_value": string
+      }
+    }
+  ],
   "extracted_records": [
     {
-      "sale_month": "YYYY-MM" | string,
+      "sale_month": "YYYY-MM",
       "store": string,
       "isrc": string | null,
       "title": string | null,
-      "earnings": number,
-      "gross_earnings": number | null,
+      "earnings": string,
+      "gross_earnings": string | null,
       "streams": number | null,
       "downloads": number | null,
       "territory": string | null,
       "royalty_type": string | null,
-      "original_column_name": string | null
+      "original_column_name": string | null,
+      "is_summary_row": boolean
     }
   ],
   "totals": {
-    "declared_gross": number | null,
-    "declared_net": number | null
+    "declared_gross": string | null,
+    "declared_net": string | null
   },
   "extraction_notes": [string]
 }
@@ -320,54 +356,140 @@ Respond strictly in valid JSON matching this schema:
 def build_monthly_breakdown_from_rows(
     rows: List[Dict[str, Any]],
     doc_currency: str = "USD",
-    is_gross: bool = False
-) -> Tuple[List[Dict[str, Any]], float]:
+    is_gross: bool = False,
+    filename: str = "",
+    explicit_monthly_earnings: Optional[List[Dict[str, Any]]] = None
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Decimal]:
     """
-    Aggregate 100% of parsed transaction rows into chronological month-by-month historical breakdown.
-    Calculates exact net royalties, stream counts, track counts, primary DSP sources, and MoM growth rates.
+    Aggregate parsed transaction rows into chronological month-by-month historical breakdown using exact Decimal arithmetic.
+    Prevents double-counting by excluding summary/subtotal/total rows when detail transaction rows exist.
+    Returns (monthly_earnings_exact, monthly_breakdown_legacy, total_net_decimal).
     """
-    monthly_agg: Dict[str, Dict[str, Any]] = {}
-    total_net = 0.0
+    # If LLM extracted explicit monthly earnings directly from a monthly summary table, validate and prefer them!
+    if explicit_monthly_earnings and isinstance(explicit_monthly_earnings, list) and len(explicit_monthly_earnings) > 0:
+        validated_earnings: List[Dict[str, Any]] = []
+        legacy_breakdown: List[Dict[str, Any]] = []
+        total_dec = Decimal("0.0")
 
-    for r in rows:
+        for idx, item in enumerate(explicit_monthly_earnings):
+            if not isinstance(item, dict):
+                continue
+            raw_m = str(item.get("month") or "")
+            m_norm = normalize_date_to_yyyy_mm(raw_m)
+            if not m_norm:
+                continue
+
+            amt_raw = item.get("amount") or item.get("net_royalty") or "0.0"
+            amt_dec = clean_decimal(amt_raw)
+            if is_gross and amt_dec > Decimal("0.0"):
+                pass  # already Net or handled upstream
+
+            total_dec += amt_dec
+            amt_str = str(amt_dec)
+
+            prov_raw = item.get("provenance", {}) if isinstance(item.get("provenance"), dict) else {}
+            prov_record = {
+                "source_file": filename,
+                "page": prov_raw.get("page") or 1,
+                "source_row": prov_raw.get("source_row") or (idx + 1),
+                "source_column": prov_raw.get("source_column") or "Net Royalty Summary",
+                "source_value": prov_raw.get("source_value") or str(amt_raw)
+            }
+
+            validated_earnings.append({
+                "month": m_norm,
+                "amount": amt_str,
+                "currency": doc_currency,
+                "provenance": prov_record
+            })
+
+            legacy_breakdown.append({
+                "month": m_norm,
+                "gross_royalty": None,
+                "net_royalty": float(amt_dec),
+                "currency": doc_currency,
+                "streams": 0,
+                "downloads": 0,
+                "other_units": 0,
+                "track_count": 1,
+                "primary_source": "Monthly Summary",
+                "mom_growth_pct": None,
+                "sources": [{"platform": "Monthly Summary", "territory": "WW", "royalty_type": "Sound Recording", "amount": float(amt_dec), "amount_str": amt_str}]
+            })
+
+        if validated_earnings:
+            return validated_earnings, legacy_breakdown, total_dec
+
+    monthly_agg: Dict[str, Dict[str, Any]] = {}
+    total_net_decimal = Decimal("0.0")
+
+    # Anti-Double-Counting check: detect if detail transaction rows exist
+    has_detail_rows = any(not r.get("is_summary_row", False) for r in rows)
+
+    for r_idx, r in enumerate(rows):
+        is_summary = r.get("is_summary_row", False)
+        title_store = (str(r.get("title") or "") + " " + str(r.get("store") or "")).lower()
+        if has_detail_rows and (is_summary or any(term in title_store for term in ["subtotal", "grand total", "summary total", "statement total"])):
+            continue
+
         m = r.get("sale_month") or "2026-01"
-        amt = float(r.get("earnings_usd", 0.0) or 0.0)
+        amt_raw = r.get("earnings_exact_str") or r.get("earnings_usd") or r.get("earnings") or "0.0"
+        amt_decimal = clean_decimal(amt_raw)
+
         store = r.get("store") or "Unknown"
         title = r.get("title") or "Untitled Track"
         streams_cnt = int(r.get("streams", 0) or r.get("quantity", 0) or 0)
 
-        total_net += amt
+        total_net_decimal += amt_decimal
 
         if m not in monthly_agg:
             monthly_agg[m] = {
                 "month": m,
-                "gross_royalty": None,
-                "net_royalty": 0.0,
+                "net_decimal": Decimal("0.0"),
                 "currency": doc_currency,
                 "streams": 0,
                 "downloads": 0,
                 "tracks_set": set(),
-                "sources_map": {}
+                "sources_map": {},
+                "source_row": r_idx + 1
             }
 
         m_item = monthly_agg[m]
-        m_item["net_royalty"] += amt
+        m_item["net_decimal"] += amt_decimal
         m_item["streams"] += streams_cnt
         m_item["tracks_set"].add(title)
-        m_item["sources_map"][store] = m_item["sources_map"].get(store, 0.0) + amt
+        m_item["sources_map"][store] = m_item["sources_map"].get(store, Decimal("0.0")) + amt_decimal
 
     sorted_months = sorted(monthly_agg.keys())
+    monthly_earnings_list = []
     breakdown_list = []
-    prev_net = None
+    prev_net_dec = None
 
     for m in sorted_months:
         item = monthly_agg[m]
-        net_amt = round(item["net_royalty"], 4)
+        net_dec = item["net_decimal"]
+        net_str = str(net_dec)
 
+        # 1. Exact Monthly Earnings Schema Output
+        monthly_earnings_list.append({
+            "month": m,
+            "amount": net_str,
+            "currency": doc_currency,
+            "provenance": {
+                "source_file": filename,
+                "page": 1,
+                "source_row": item["source_row"],
+                "source_column": "Net Royalty",
+                "source_value": net_str
+            }
+        })
+
+        # 2. Legacy Monthly Breakdown Schema Output
+        net_amt_float = float(net_dec)
         mom_growth = None
-        if prev_net is not None and prev_net > 0:
-            mom_growth = round(((net_amt - prev_net) / prev_net) * 100, 1)
-        prev_net = net_amt
+        if prev_net_dec is not None and prev_net_dec > Decimal("0.0"):
+            mom_growth = round(float(((net_dec - prev_net_dec) / prev_net_dec) * Decimal("100.0")), 1)
+        prev_net_dec = net_dec
 
         sources_map = item["sources_map"]
         top_store = max(sources_map.items(), key=lambda x: x[1])[0] if sources_map else "Streaming"
@@ -377,15 +499,16 @@ def build_monthly_breakdown_from_rows(
                 "platform": store_name,
                 "territory": "WW",
                 "royalty_type": "Sound Recording",
-                "amount": round(s_amt, 4)
+                "amount": float(s_amt),
+                "amount_str": str(s_amt)
             }
             for store_name, s_amt in sources_map.items()
         ]
 
         breakdown_list.append({
             "month": m,
-            "gross_royalty": round(item["gross_royalty"], 4) if item["gross_royalty"] else None,
-            "net_royalty": net_amt,
+            "gross_royalty": None,
+            "net_royalty": net_amt_float,
             "currency": doc_currency,
             "streams": item["streams"],
             "downloads": item["downloads"],
@@ -396,7 +519,7 @@ def build_monthly_breakdown_from_rows(
             "sources": sources_list
         })
 
-    return breakdown_list, round(total_net, 4)
+    return monthly_earnings_list, breakdown_list, total_net_decimal
 
 
 def parse_royalty_statement(
@@ -436,9 +559,10 @@ def parse_royalty_statement(
     # If full tabular rows were extracted, return complete exact month-wise breakdown INSTANTLY
     if parsed_full_rows and len(parsed_full_rows) > 0:
         doc_currency = detect_currency(text_content[:2000])
-        monthly_breakdown_list, calculated_net_total = build_monthly_breakdown_from_rows(parsed_full_rows, doc_currency, is_gross)
+        monthly_earnings_list, monthly_breakdown_list, calculated_net_decimal = build_monthly_breakdown_from_rows(
+            parsed_full_rows, doc_currency=doc_currency, is_gross=is_gross, filename=filename
+        )
 
-        # Fast local header metadata & declared total extraction
         artist_match = re.search(r"(?:artist|payee|name)[:=]\s*([^\n,]+)", text_content, re.IGNORECASE)
         label_match = re.search(r"(?:label|distributor|imprint)[:=]\s*([^\n,]+)", text_content, re.IGNORECASE)
         total_match = re.search(r"(?:statement_total_declared|declared_total|total_payable|total_net|statement_total)[:=]?\s*\$?\s*([\d,]+(?:\.\d+)?)", text_content, re.IGNORECASE)
@@ -446,22 +570,24 @@ def parse_royalty_statement(
         meta_artist = artist_match.group(1).strip() if artist_match else None
         meta_label = label_match.group(1).strip() if label_match else None
 
-        declared_total = None
+        declared_decimal = None
         if total_match:
             try:
-                declared_total = float(total_match.group(1).replace(",", ""))
-            except ValueError:
+                declared_decimal = clean_decimal(total_match.group(1))
+            except Exception:
                 pass
 
-        diff = 0.0
+        diff_decimal = Decimal("0.0")
         rec_status = "reconciled"
-        if declared_total is not None:
-            diff = round(abs(calculated_net_total - declared_total), 4)
-            if diff > 0.50:
+        if declared_decimal is not None:
+            diff_decimal = abs(calculated_net_decimal - declared_decimal)
+            if diff_decimal > Decimal("0.50"):
                 rec_status = "mismatch"
-                warnings.append(f"Reconciliation Mismatch: Declared total (${declared_total}) differs from calculated total (${calculated_net_total}).")
+                warnings.append(f"Reconciliation Mismatch: Declared total (${declared_decimal}) differs from calculated total (${calculated_net_decimal}) by ${diff_decimal}.")
 
-        period_str = f"{monthly_breakdown_list[0]['month']} to {monthly_breakdown_list[-1]['month']}" if monthly_breakdown_list else None
+        period_str = f"{monthly_earnings_list[0]['month']} to {monthly_earnings_list[-1]['month']}" if monthly_earnings_list else None
+        calc_net_float = float(calculated_net_decimal)
+        calc_net_str = str(calculated_net_decimal)
 
         return {
             "status": "parsed" if rec_status == "reconciled" else "needs_review",
@@ -472,22 +598,24 @@ def parse_royalty_statement(
                 "currency": doc_currency,
                 "source_file": filename
             },
+            "monthly_earnings": monthly_earnings_list,
             "monthly_breakdown": monthly_breakdown_list,
             "totals": {
                 "gross": None,
-                "net": calculated_net_total
+                "net": calc_net_float,
+                "net_str": calc_net_str
             },
             "reconciliation": {
                 "status": rec_status,
-                "statement_total": declared_total if declared_total else calculated_net_total,
-                "calculated_total": calculated_net_total,
-                "difference": diff
+                "statement_total": str(declared_decimal) if declared_decimal is not None else calc_net_str,
+                "calculated_total": calc_net_str,
+                "difference": str(diff_decimal)
             },
             "warnings": warnings,
             "provenance": {
                 "net_royalty_total": {
                     "field": "net_royalty",
-                    "value": calculated_net_total,
+                    "value": calc_net_str,
                     "currency": doc_currency,
                     "source_file": filename,
                     "page": 1,
@@ -529,12 +657,14 @@ Extract metadata, monthly royalty breakdown, totals, and granular revenue record
 
     meta_raw = extracted_data.get("statement_metadata", {})
     records_raw = extracted_data.get("extracted_records", [])
+    meta_raw = extracted_data.get("statement_metadata", {})
+    records_raw = extracted_data.get("extracted_records", [])
+    explicit_monthly = extracted_data.get("monthly_earnings", [])
     totals_raw = extracted_data.get("totals", {})
 
-    if not isinstance(records_raw, list) or len(records_raw) == 0:
+    if (not isinstance(records_raw, list) or len(records_raw) == 0) and (not isinstance(explicit_monthly, list) or len(explicit_monthly) == 0):
         return _fallback_to_rule_based(content_bytes, filename, f_dist, is_gross)
 
-    # Normalize Records & Perform Validation
     doc_currency = meta_raw.get("currency") or detect_currency(sample_text)
     normalized_rows: List[Dict[str, Any]] = []
 
@@ -548,65 +678,77 @@ Extract metadata, monthly royalty breakdown, totals, and granular revenue record
         store = str(r.get("store") or "Unknown").strip() or "Unknown"
         isrc = str(r.get("isrc") or "").strip()
         title = str(r.get("title") or "Untitled Track").strip() or "Untitled Track"
+        is_summary_row = bool(r.get("is_summary_row", False))
 
-        try:
-            amt = float(r.get("earnings", 0.0) or 0.0)
-        except (ValueError, TypeError):
-            amt = 0.0
+        amt_raw = r.get("earnings") or r.get("net_earnings") or r.get("amount") or "0.0"
+        amt_decimal = clean_decimal(amt_raw)
 
-        if amt < 0:
-            amt = 0.0
+        if amt_decimal < Decimal("0.0"):
+            amt_decimal = Decimal("0.0")
 
         if is_gross and f_dist is not None:
-            amt = amt * (1.0 - f_dist)
+            amt_decimal = amt_decimal * (Decimal("1.0") - Decimal(str(f_dist)))
 
         normalized_rows.append({
             "sale_month": norm_month,
             "store": store,
             "isrc": isrc,
             "title": title,
-            "earnings_usd": round(amt, 4),
+            "is_summary_row": is_summary_row,
+            "earnings_usd": float(amt_decimal),
+            "earnings_exact_str": str(amt_decimal),
             "source_file": filename,
             "parsed_by": "multimodal_llm"
         })
 
-    monthly_breakdown_list, calculated_net_total = build_monthly_breakdown_from_rows(normalized_rows, doc_currency, is_gross)
+    monthly_earnings_list, monthly_breakdown_list, calculated_net_decimal = build_monthly_breakdown_from_rows(
+        normalized_rows, doc_currency=doc_currency, is_gross=is_gross, filename=filename, explicit_monthly_earnings=explicit_monthly
+    )
 
-    declared_total = totals_raw.get("declared_net") or meta_raw.get("statement_total_declared")
+    declared_raw = totals_raw.get("declared_net") or meta_raw.get("statement_total_declared")
+    declared_decimal = clean_decimal(declared_raw) if declared_raw is not None else None
+
     rec_status = "reconciled"
-    diff = 0.0
+    diff_decimal = Decimal("0.0")
 
-    if declared_total is not None and isinstance(declared_total, (int, float)):
-        diff = round(abs(calculated_net_total - declared_total), 2)
-        if diff > 0.50:
+    if declared_decimal is not None:
+        diff_decimal = abs(calculated_net_decimal - declared_decimal)
+        if diff_decimal > Decimal("0.50"):
             rec_status = "mismatch"
-            warnings.append(f"Reconciliation Mismatch: Declared total (${declared_total}) differs from calculated total (${calculated_net_total:.2f}).")
+            warnings.append(f"Reconciliation Mismatch: Declared total (${declared_decimal}) differs from calculated total (${calculated_net_decimal}) by ${diff_decimal}.")
+
+    calc_net_float = float(calculated_net_decimal)
+    calc_net_str = str(calculated_net_decimal)
+
+    period_str = meta_raw.get("period") or (f"{monthly_earnings_list[0]['month']} to {monthly_earnings_list[-1]['month']}" if monthly_earnings_list else None)
 
     return {
         "status": "parsed" if rec_status == "reconciled" else "needs_review",
         "statement_metadata": {
             "artist": meta_raw.get("artist"),
             "label": meta_raw.get("label"),
-            "period": meta_raw.get("period"),
+            "period": period_str,
             "currency": doc_currency,
             "source_file": filename
         },
+        "monthly_earnings": monthly_earnings_list,
         "monthly_breakdown": monthly_breakdown_list,
         "totals": {
-            "gross": round(totals_raw.get("declared_gross"), 2) if totals_raw.get("declared_gross") else None,
-            "net": calculated_net_total
+            "gross": float(clean_decimal(totals_raw.get("declared_gross"))) if totals_raw.get("declared_gross") else None,
+            "net": calc_net_float,
+            "net_str": calc_net_str
         },
         "reconciliation": {
             "status": rec_status,
-            "statement_total": round(declared_total, 2) if declared_total else None,
-            "calculated_total": calculated_net_total,
-            "difference": diff
+            "statement_total": str(declared_decimal) if declared_decimal is not None else calc_net_str,
+            "calculated_total": calc_net_str,
+            "difference": str(diff_decimal)
         },
         "warnings": warnings,
         "provenance": {
             "net_royalty_total": {
                 "field": "net_royalty",
-                "value": calculated_net_total,
+                "value": calc_net_str,
                 "currency": doc_currency,
                 "source_file": filename,
                 "page": 1,
@@ -618,123 +760,30 @@ Extract metadata, monthly royalty breakdown, totals, and granular revenue record
         "rows": normalized_rows
     }
 
-    # Format monthly breakdown list
-    monthly_breakdown_list: List[MonthlyBreakdownItem] = []
-    for m_key in sorted(monthly_agg.keys()):
-        m_data = monthly_agg[m_key]
-        sources_list = [
-            RoyaltySourceDetail(
-                platform=pk[0],
-                territory=pk[1],
-                royalty_type=pk[2],
-                amount=round(p_amt, 2)
-            )
-            for pk, p_amt in m_data["sources_map"].items()
-        ]
-
-        monthly_breakdown_list.append(MonthlyBreakdownItem(
-            month=m_key,
-            gross_royalty=round(m_data["gross_royalty"], 2) if m_data["gross_royalty"] is not None else None,
-            net_royalty=round(m_data["net_royalty"], 2),
-            currency=doc_currency,
-            streams=m_data["streams"],
-            downloads=m_data["downloads"],
-            other_units=0,
-            sources=sources_list
-        ))
-
-    # Step 6: Reconciliation
-    declared_total = totals_raw.get("declared_net") or meta_raw.get("statement_total_declared")
-    rec_status = "reconciled"
-    diff = 0.0
-
-    if declared_total is not None and isinstance(declared_total, (int, float)):
-        diff = round(abs(calculated_net_total - declared_total), 2)
-        if diff > 0.50:
-            rec_status = "mismatch"
-            warnings.append(f"Reconciliation Mismatch: Declared statement total (${declared_total}) differs from calculated total (${calculated_net_total:.2f}) by ${diff}.")
-
-    reconciliation_res = ReconciliationResult(
-        status=rec_status,
-        statement_total=round(declared_total, 2) if declared_total else None,
-        calculated_total=round(calculated_net_total, 2),
-        difference=diff
-    )
-
-    # Step 7: Format Provenance Records
-    provenance_map = {
-        "statement_artist": ProvenanceRecord(
-            field="artist",
-            value=meta_raw.get("artist"),
-            currency=doc_currency,
-            source_file=filename,
-            page=1,
-            original_column="Header Artist",
-            confidence=0.95 if meta_raw.get("artist") else 0.5,
-            status="verified" if meta_raw.get("artist") else "unverified"
-        ),
-        "net_royalty_total": ProvenanceRecord(
-            field="net_royalty",
-            value=round(calculated_net_total, 2),
-            currency=doc_currency,
-            source_file=filename,
-            page=1,
-            original_column="Net Earnings",
-            confidence=1.0 if rec_status == "reconciled" else 0.85,
-            status="verified" if rec_status == "reconciled" else "review_required"
-        )
-    }
-
-    # Determine overall parsing status
-    if len(warnings) == 0 and rec_status == "reconciled":
-        overall_status = "parsed"
-    elif rec_status == "mismatch":
-        overall_status = "needs_review"
-    else:
-        overall_status = "parsed_with_warnings"
-
-    output_schema = NormalizedRoyaltyResult(
-        status=overall_status,
-        statement_metadata=StatementMetadata(
-            artist=meta_raw.get("artist"),
-            label=meta_raw.get("label"),
-            period=meta_raw.get("period"),
-            currency=doc_currency,
-            source_file=filename
-        ),
-        monthly_breakdown=monthly_breakdown_list,
-        totals=StatementTotals(
-            gross=round(totals_raw.get("declared_gross"), 2) if totals_raw.get("declared_gross") else None,
-            net=round(calculated_net_total, 2)
-        ),
-        reconciliation=reconciliation_res,
-        warnings=warnings,
-        provenance=provenance_map,
-        rows=normalized_rows
-    )
-
-    return output_schema.model_dump()
-
-
 def _fallback_to_rule_based(
     content_bytes: bytes,
     filename: str,
     f_dist: Optional[float],
     is_gross: bool
 ) -> Dict[str, Any]:
-    """Fallback parser using rule-based table normalizer."""
+    """Fallback parser using rule-based table normalizer with exact Decimal calculations."""
     from backend.engine.normalizer import parse_csv_or_tsv_content
     try:
         text_str = content_bytes.decode("utf-8", errors="replace")
         rows = parse_csv_or_tsv_content(text_str, filename=filename, f_dist=f_dist, is_gross=is_gross)
         if rows:
-            tot = sum(r["earnings_usd"] for r in rows)
+            doc_curr = detect_currency(text_str[:2000])
+            m_earnings, m_breakdown, tot_dec = build_monthly_breakdown_from_rows(
+                rows, doc_currency=doc_curr, is_gross=is_gross, filename=filename
+            )
+            tot_str = str(tot_dec)
             return {
                 "status": "parsed_with_warnings",
-                "statement_metadata": {"artist": None, "label": None, "period": None, "currency": "USD", "source_file": filename},
-                "monthly_breakdown": [],
-                "totals": {"gross": None, "net": round(tot, 2)},
-                "reconciliation": {"status": "unverified", "statement_total": None, "calculated_total": round(tot, 2), "difference": 0.0},
+                "statement_metadata": {"artist": None, "label": None, "period": None, "currency": doc_curr, "source_file": filename},
+                "monthly_earnings": m_earnings,
+                "monthly_breakdown": m_breakdown,
+                "totals": {"gross": None, "net": float(tot_dec), "net_str": tot_str},
+                "reconciliation": {"status": "unverified", "statement_total": None, "calculated_total": tot_str, "difference": "0.00"},
                 "warnings": ["Multimodal LLM offline/unavailable — parsed using rule-based normalizer."],
                 "provenance": {},
                 "rows": rows
@@ -749,9 +798,10 @@ def _build_failed_response(filename: str, error_msg: str) -> Dict[str, Any]:
     return {
         "status": "failed",
         "statement_metadata": {"artist": None, "label": None, "period": None, "currency": "USD", "source_file": filename},
+        "monthly_earnings": [],
         "monthly_breakdown": [],
-        "totals": {"gross": None, "net": 0.0},
-        "reconciliation": {"status": "unverified", "statement_total": None, "calculated_total": 0.0, "difference": 0.0},
+        "totals": {"gross": None, "net": 0.0, "net_str": "0.00"},
+        "reconciliation": {"status": "unverified", "statement_total": None, "calculated_total": "0.00", "difference": "0.00"},
         "warnings": [error_msg],
         "provenance": {},
         "rows": []

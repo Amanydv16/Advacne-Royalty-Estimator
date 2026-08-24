@@ -97,7 +97,7 @@ def test_reconciliation_mismatch_warning(mock_llm):
         "statement_metadata": {
             "artist": "Test Artist",
             "currency": "USD",
-            "statement_total_declared": 3000.00
+            "statement_total_declared": "3000.00"
         },
         "extracted_records": [
             {
@@ -105,11 +105,11 @@ def test_reconciliation_mismatch_warning(mock_llm):
                 "store": "Spotify",
                 "isrc": "USQX92100001",
                 "title": "Single A",
-                "earnings": 1500.00
+                "earnings": "1500.00"
             }
         ],
         "totals": {
-            "declared_net": 3000.00
+            "declared_net": "3000.00"
         }
     }
     mock_llm.return_value = json.dumps(mock_response)
@@ -118,8 +118,60 @@ def test_reconciliation_mismatch_warning(mock_llm):
 
     assert result["reconciliation"]["status"] == "mismatch"
     assert result["status"] == "needs_review"
-    assert result["reconciliation"]["difference"] == 1500.00
+    assert str(result["reconciliation"]["difference"]) == "1500.0" or str(result["reconciliation"]["difference"]) == "1500.00"
     assert any("Reconciliation Mismatch" in w for w in result["warnings"])
+
+
+@patch("backend.services.llm_parser._call_openai_multimodal")
+def test_exact_decimal_precision_no_rounding(mock_llm):
+    """Verify that exact decimal precision (e.g. 172.21, 1245.67) is preserved without float rounding loss."""
+    mock_response = {
+        "statement_metadata": {"artist": "Precision Artist", "currency": "USD"},
+        "monthly_earnings": [
+            {
+                "month": "2026-01",
+                "amount": "172.21",
+                "currency": "USD",
+                "provenance": {"page": 1, "source_row": 4, "source_column": "Net Royalty", "source_value": "172.21"}
+            },
+            {
+                "month": "2026-02",
+                "amount": "1245.67",
+                "currency": "USD",
+                "provenance": {"page": 1, "source_row": 5, "source_column": "Net Royalty", "source_value": "1245.67"}
+            }
+        ],
+        "extracted_records": [],
+        "totals": {"declared_net": "1417.88"}
+    }
+    mock_llm.return_value = json.dumps(mock_response)
+
+    result = parse_royalty_statement("precision.pdf", b"%PDF fake bytes")
+
+    assert result["status"] == "parsed"
+    assert len(result["monthly_earnings"]) == 2
+    assert result["monthly_earnings"][0]["amount"] == "172.21"
+    assert result["monthly_earnings"][1]["amount"] == "1245.67"
+    assert result["monthly_earnings"][0]["provenance"]["source_value"] == "172.21"
+    assert result["reconciliation"]["calculated_total"] == "1417.88"
+
+
+def test_anti_double_counting_summary_rows():
+    """Verify that subtotal/summary rows are not added twice when detail rows are present."""
+    from backend.services.llm_parser import build_monthly_breakdown_from_rows
+    from decimal import Decimal
+
+    rows = [
+        {"sale_month": "2026-01", "store": "Spotify", "title": "Track 1", "earnings_exact_str": "100.25", "is_summary_row": False},
+        {"sale_month": "2026-01", "store": "Apple Music", "title": "Track 2", "earnings_exact_str": "50.10", "is_summary_row": False},
+        {"sale_month": "2026-01", "store": "Summary", "title": "January Subtotal", "earnings_exact_str": "150.35", "is_summary_row": True}
+    ]
+
+    m_earnings, m_breakdown, total_dec = build_monthly_breakdown_from_rows(rows, doc_currency="USD", filename="test.csv")
+
+    # Should equal 100.25 + 50.10 = 150.35, NOT 300.70!
+    assert total_dec == Decimal("150.35")
+    assert m_earnings[0]["amount"] == "150.35"
 
 
 @patch("backend.services.llm_parser._call_openai_multimodal")
@@ -129,7 +181,7 @@ def test_scanned_image_statement_parsing(mock_llm):
         "statement_metadata": {
             "artist": "Scanned Artist",
             "currency": "EUR",
-            "statement_total_declared": 850.00
+            "statement_total_declared": "850.00"
         },
         "extracted_records": [
             {
@@ -137,10 +189,10 @@ def test_scanned_image_statement_parsing(mock_llm):
                 "store": "Deezer",
                 "isrc": "FR1234567890",
                 "title": "Chanson Un",
-                "earnings": 850.00
+                "earnings": "850.00"
             }
         ],
-        "totals": {"declared_net": 850.00}
+        "totals": {"declared_net": "850.00"}
     }
     mock_llm.return_value = json.dumps(mock_response)
 

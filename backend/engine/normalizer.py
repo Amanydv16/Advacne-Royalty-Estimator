@@ -76,19 +76,38 @@ def parse_month_string(raw_val: Any) -> Optional[str]:
     return None
 
 
-def clean_currency(raw_val: Any) -> float:
-    """Parse numeric currency strings safely."""
+from decimal import Decimal, InvalidOperation
+
+
+def clean_decimal(raw_val: Any) -> Decimal:
+    """Parse numeric currency strings safely into exact Decimal without floating-point precision loss."""
     if raw_val is None:
-        return 0.0
-    if isinstance(raw_val, (int, float)):
-        return float(raw_val)
-    val_str = str(raw_val).strip().replace("$", "").replace("€", "").replace("£", "").replace(",", "")
+        return Decimal("0.0")
+    if isinstance(raw_val, Decimal):
+        return raw_val
+    if isinstance(raw_val, int):
+        return Decimal(str(raw_val))
+    if isinstance(raw_val, float):
+        # Convert float to string representation to avoid binary floating-point noise
+        val_s = f"{raw_val:.8f}".rstrip("0").rstrip(".")
+        try:
+            return Decimal(val_s)
+        except InvalidOperation:
+            return Decimal(str(raw_val))
+
+    val_str = str(raw_val).strip().replace("$", "").replace("€", "").replace("£", "").replace("₹", "").replace(",", "")
     if not val_str or val_str == "-" or val_str.lower() == "nan":
-        return 0.0
+        return Decimal("0.0")
     try:
-        return float(val_str)
-    except ValueError:
-        return 0.0
+        return Decimal(val_str)
+    except InvalidOperation:
+        return Decimal("0.0")
+
+
+def clean_currency(raw_val: Any) -> float:
+    """Parse numeric currency strings safely into float (for backwards compatibility)."""
+    dec = clean_decimal(raw_val)
+    return float(dec)
 
 
 def detect_and_normalize_table(rows: List[Dict[str, Any]], filename: str = "", f_dist: Optional[float] = None, is_gross: bool = False) -> List[Dict[str, Any]]:
@@ -183,19 +202,20 @@ def detect_and_normalize_table(rows: List[Dict[str, Any]], filename: str = "", f
         isrc = str(row.get(isrc_col, "")).strip() if isrc_col else ""
         title = str(row.get(title_col, "Untitled Track")).strip() if title_col else "Untitled Track"
 
-        raw_amt = clean_currency(row.get(amount_col, 0.0))
+        raw_decimal = clean_decimal(row.get(amount_col, "0.0"))
 
         if is_gross and f_dist is not None:
-            earnings_usd = raw_amt * (1.0 - f_dist)
+            earnings_decimal = raw_decimal * (Decimal("1.0") - Decimal(str(f_dist)))
         else:
-            earnings_usd = raw_amt
+            earnings_decimal = raw_decimal
 
         normalized.append({
             "sale_month": sale_month,
             "store": store if store else "Unknown",
             "isrc": isrc,
             "title": title if title else "Untitled Track",
-            "earnings_usd": earnings_usd,
+            "earnings_usd": float(earnings_decimal),
+            "earnings_exact_str": str(earnings_decimal),
             "source_file": filename
         })
 

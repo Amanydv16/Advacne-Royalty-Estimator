@@ -1062,7 +1062,7 @@ async function parseUploadedFilesWithMultimodalLLM(fileList) {
 
 function parseCSVTextClientSide(text, filename = "statement.csv") {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  if (lines.length === 0) return { status: 'parsed', totals: { net: 0 }, monthly_breakdown: [] };
+  if (lines.length === 0) return { status: 'parsed', totals: { net: 0, net_str: "0.00" }, monthly_earnings: [], monthly_breakdown: [] };
 
   let headerIdx = 0;
   const keyTerms = ['month', 'date', 'period', 'earnings', 'net', 'amount', 'royalty', 'total', 'revenue', 'title', 'isrc'];
@@ -1094,22 +1094,41 @@ function parseCSVTextClientSide(text, filename = "statement.csv") {
     let mMatch = rawMonth ? rawMonth.match(/(\d{4})[-/.](0[1-9]|1[0-2])/) : null;
     let monthStr = mMatch ? `${mMatch[1]}-${mMatch[2]}` : '2026-01';
 
-    let rawAmt = cols[amtCol] ? parseFloat(cols[amtCol].replace(/[\$,\s]/g, '')) : 0;
+    let rawAmtStr = cols[amtCol] ? cols[amtCol].replace(/[\$,\s]/g, '') : '0';
+    let rawAmt = parseFloat(rawAmtStr);
     if (isNaN(rawAmt)) rawAmt = 0;
 
     totalNet += rawAmt;
 
     if (!monthlyAgg[monthStr]) {
-      monthlyAgg[monthStr] = { month: monthStr, net_royalty: 0, track_count: 1, primary_source: 'Streaming' };
+      monthlyAgg[monthStr] = { month: monthStr, net_royalty: 0, raw_str_sum: 0, track_count: 1, primary_source: 'Streaming', first_row: i + 1 };
     }
     monthlyAgg[monthStr].net_royalty += rawAmt;
   }
 
   const sortedMonths = Object.keys(monthlyAgg).sort();
   let prevNet = null;
+
+  const monthlyEarnings = sortedMonths.map(m => {
+    const item = monthlyAgg[m];
+    const amtStr = item.net_royalty.toFixed(2);
+    return {
+      month: m,
+      amount: amtStr,
+      currency: 'USD',
+      provenance: {
+        source_file: filename,
+        page: 1,
+        source_row: item.first_row,
+        source_column: 'Net Royalty',
+        source_value: amtStr
+      }
+    };
+  });
+
   const breakdownList = sortedMonths.map(m => {
     const item = monthlyAgg[m];
-    const netAmt = Math.round(item.net_royalty * 100) / 100;
+    const netAmt = item.net_royalty;
     let momGrowth = null;
     if (prevNet !== null && prevNet > 0) {
       momGrowth = Math.round(((netAmt - prevNet) / prevNet) * 1000) / 10;
@@ -1125,12 +1144,15 @@ function parseCSVTextClientSide(text, filename = "statement.csv") {
     };
   });
 
+  const totStr = totalNet.toFixed(2);
+
   return {
     status: 'parsed',
     statement_metadata: { currency: 'USD', source_file: filename },
+    monthly_earnings: monthlyEarnings,
     monthly_breakdown: breakdownList,
-    totals: { net: Math.round(totalNet * 100) / 100 },
-    reconciliation: { status: 'reconciled', statement_total: Math.round(totalNet * 100) / 100, calculated_total: Math.round(totalNet * 100) / 100, difference: 0 },
+    totals: { net: totalNet, net_str: totStr },
+    reconciliation: { status: 'reconciled', statement_total: totStr, calculated_total: totStr, difference: "0.00" },
     warnings: []
   };
 }
