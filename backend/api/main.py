@@ -298,8 +298,11 @@ class SoundchartsRollupRequest(BaseModel):
 
 
 @app.get("/api/artists/search")
+@app.get("/artists/search")
 @app.get("/api/spotify/search")
+@app.get("/spotify/search")
 @app.get("/api/spotify/search-artist")
+@app.get("/spotify/search-artist")
 def search_spotify_artists(q: str):
     """
     Search for live Spotify artists directly using Spotify Web API + fallback global directory.
@@ -338,6 +341,7 @@ def search_spotify_artists(q: str):
 
 
 @app.get("/api/spotify/resolve")
+@app.get("/spotify/resolve")
 def resolve_spotify_artist(q: str):
     """
     Resolves an artist name, Spotify URI, or Spotify URL directly to a genuine Spotify artist ID,
@@ -393,8 +397,11 @@ def resolve_spotify_artist(q: str):
 
 
 @app.get("/api/artists/details")
+@app.get("/artists/details")
 @app.get("/api/spotify/artist/{artist_id}")
+@app.get("/spotify/artist/{artist_id}")
 @app.get("/api/spotify/artist-details")
+@app.get("/spotify/artist-details")
 def get_spotify_artist_details(artist_id: Optional[str] = None, artist_name: Optional[str] = None, artistId: Optional[str] = None, artistName: Optional[str] = None):
     """
     Retrieve normalized artist profile, paginated catalogue, and existing monthly stream metrics.
@@ -405,6 +412,7 @@ def get_spotify_artist_details(artist_id: Optional[str] = None, artist_name: Opt
 
 
 @app.get("/api/spotify/artist-tracks")
+@app.get("/spotify/artist-tracks")
 def get_artist_spotify_catalog(
     artist_name: Optional[str] = None,
     artistName: Optional[str] = None,

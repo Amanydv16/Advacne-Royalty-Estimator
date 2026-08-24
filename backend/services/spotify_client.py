@@ -11,11 +11,19 @@ import json
 import csv
 import base64
 import math
+import ssl
 import urllib.request
 import urllib.parse
 import urllib.error
 import threading
 from typing import Dict, Any, List, Optional, Tuple
+
+try:
+    SSL_CONTEXT = ssl.create_default_context()
+    SSL_CONTEXT.check_hostname = False
+    SSL_CONTEXT.verify_mode = ssl.CERT_NONE
+except Exception:
+    SSL_CONTEXT = None
 
 
 class SpotifyClient:
@@ -153,7 +161,7 @@ class SpotifyClient:
                     "User-Agent": BROWSER_UA
                 }
             )
-            with urllib.request.urlopen(req, timeout=4.0) as resp:
+            with urllib.request.urlopen(req, timeout=4.0, context=SSL_CONTEXT) as resp:
                 res_data = json.loads(resp.read().decode("utf-8"))
                 token = res_data.get("access_token")
                 expires_in = res_data.get("expires_in", 3600)
@@ -174,7 +182,7 @@ class SpotifyClient:
                     "Accept-Language": "en-US,en;q=0.9",
                 }
             )
-            with urllib.request.urlopen(req, timeout=5.0) as resp:
+            with urllib.request.urlopen(req, timeout=5.0, context=SSL_CONTEXT) as resp:
                 html = resp.read().decode("utf-8", errors="replace")
                 m_token = re.search(r'"accessToken":"([^"]+)"', html)
                 if not m_token:
@@ -228,7 +236,7 @@ class SpotifyClient:
         req = urllib.request.Request(endpoint_url, headers=headers)
         
         try:
-            with urllib.request.urlopen(req, timeout=4.0) as resp:
+            with urllib.request.urlopen(req, timeout=4.0, context=SSL_CONTEXT) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             if e.code == 401 and retry_on_401:
@@ -240,7 +248,7 @@ class SpotifyClient:
                     headers["Authorization"] = f"Bearer {new_token}"
                     retry_req = urllib.request.Request(endpoint_url, headers=headers)
                     try:
-                        with urllib.request.urlopen(retry_req, timeout=4.0) as resp:
+                        with urllib.request.urlopen(retry_req, timeout=4.0, context=SSL_CONTEXT) as resp:
                             return json.loads(resp.read().decode("utf-8"))
                     except Exception:
                         return None
@@ -864,7 +872,7 @@ class SpotifyClient:
         try:
             deezer_url = f"https://api.deezer.com/search/artist?q={encoded_q}&limit=25"
             req = urllib.request.Request(deezer_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=3.5) as resp:
+            with urllib.request.urlopen(req, timeout=3.5, context=SSL_CONTEXT) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 for item in (data or {}).get("data", []) or []:
                     name = item.get("name", "")
@@ -892,7 +900,7 @@ class SpotifyClient:
         try:
             itunes_url = f"https://itunes.apple.com/search?term={encoded_q}&entity=musicArtist&limit=25"
             req = urllib.request.Request(itunes_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=3.5) as resp:
+            with urllib.request.urlopen(req, timeout=3.5, context=SSL_CONTEXT) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 for item in (data or {}).get("results", []) or []:
                     name = item.get("artistName", "")
