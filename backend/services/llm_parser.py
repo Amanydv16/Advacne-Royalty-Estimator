@@ -19,10 +19,18 @@ import os
 import re
 import json
 import datetime
+import ssl
 import urllib.request
 import urllib.error
 from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel, Field
+
+try:
+    SSL_CONTEXT = ssl.create_default_context()
+    SSL_CONTEXT.check_hostname = False
+    SSL_CONTEXT.verify_mode = ssl.CERT_NONE
+except Exception:
+    SSL_CONTEXT = None
 
 from backend.services.preprocessor import extract_content_from_file, sample_content_for_llm
 
@@ -173,7 +181,7 @@ def _call_openai_multimodal(
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=45.0) as resp:
+        with urllib.request.urlopen(req, timeout=45.0, context=SSL_CONTEXT) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return data["choices"][0]["message"]["content"]
     except urllib.error.HTTPError as e:
