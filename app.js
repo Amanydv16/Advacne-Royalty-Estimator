@@ -1171,10 +1171,11 @@ function renderMultimodalParserResults(data) {
   }
 
   const metaCurr = document.getElementById('parserMetaCurrency');
-  if (metaCurr) metaCurr.innerText = data.statement_metadata?.currency || 'USD';
+  const currencyCode = data.statement_metadata?.currency || 'USD';
+  if (metaCurr) metaCurr.innerText = currencyCode;
 
   const calcNet = document.getElementById('parserCalculatedNet');
-  if (calcNet) calcNet.innerText = formatCurrency(data.totals?.net || 0);
+  if (calcNet) calcNet.innerText = data.totals?.net_str ? `$${data.totals.net_str} ${currencyCode}` : formatCurrency(data.totals?.net || 0);
 
   const recStatus = document.getElementById('parserReconciliationStatus');
   if (recStatus) {
@@ -1195,24 +1196,44 @@ function renderMultimodalParserResults(data) {
     }
   }
 
-  // Monthly Breakdown Table
+  // Monthly Breakdown / Earnings Table
   const tbody = document.getElementById('monthlyBreakdownTableBody');
   if (tbody) {
-    const list = data.monthly_breakdown || [];
-    if (list.length === 0) {
+    const earningsList = (data.monthly_earnings && data.monthly_earnings.length > 0) ? data.monthly_earnings : [];
+    const breakdownList = data.monthly_breakdown || [];
+
+    const listToRender = earningsList.length > 0 ? earningsList : breakdownList;
+
+    if (listToRender.length === 0) {
       tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-dim);">No monthly breakdown extracted.</td></tr>`;
     } else {
-      tbody.innerHTML = list.map(m => {
-        const topSource = m.primary_source || (m.sources && m.sources.length > 0 ? m.sources[0].platform : 'Streaming');
-        const momStr = m.mom_growth_pct !== null && m.mom_growth_pct !== undefined
-          ? (m.mom_growth_pct >= 0 ? `<span style="color:#34d399; font-weight:600;">+${m.mom_growth_pct}%</span>` : `<span style="color:#f87171; font-weight:600;">${m.mom_growth_pct}%</span>`)
+      tbody.innerHTML = listToRender.map((m, idx) => {
+        const monthName = m.month || 'Unknown';
+        const exactAmountStr = m.amount ? `$${m.amount}` : (m.net_royalty !== undefined ? formatCurrency(m.net_royalty) : '$0.00');
+
+        // Lookup matching legacy breakdown item if rendering earningsList
+        const legItem = breakdownList.find(b => b.month === monthName) || (breakdownList[idx] || {});
+
+        const topSource = legItem.primary_source || (legItem.sources && legItem.sources.length > 0 ? legItem.sources[0].platform : 'Streaming / Sales');
+        const momStr = legItem.mom_growth_pct !== null && legItem.mom_growth_pct !== undefined
+          ? (legItem.mom_growth_pct >= 0 ? `<span style="color:#34d399; font-weight:600;">+${legItem.mom_growth_pct}%</span>` : `<span style="color:#f87171; font-weight:600;">${legItem.mom_growth_pct}%</span>`)
           : `<span style="color:var(--text-dim);">Baseline</span>`;
-        const trackCountStr = m.track_count ? `${m.track_count} Track${m.track_count > 1 ? 's' : ''}` : '1 Track';
+        const trackCountStr = legItem.track_count ? `${legItem.track_count} Track${legItem.track_count > 1 ? 's' : ''}` : '1 Track';
+
+        // Source Provenance Badge
+        const prov = m.provenance || {};
+        const provFile = prov.source_file || data.statement_metadata?.source_file || 'statement.pdf';
+        const provRow = prov.source_row ? ` (Row ${prov.source_row})` : '';
 
         return `
           <tr>
-            <td><strong>${escapeHtml(m.month)}</strong></td>
-            <td><strong style="color:#34d399; font-size:1.05rem;">${formatCurrency(m.net_royalty)}</strong></td>
+            <td><strong>${escapeHtml(monthName)}</strong></td>
+            <td>
+              <strong style="color:#34d399; font-size:1.05rem;">${escapeHtml(exactAmountStr)}</strong>
+              <div style="font-size:0.7rem; color:var(--text-dim);" title="${escapeHtml(provFile + provRow)}">
+                <i data-lucide="file-check" style="width:10px; height:10px; vertical-align:middle;"></i> ${escapeHtml(provFile.substring(0, 18))}${provFile.length > 18 ? '...' : ''}${provRow}
+              </div>
+            </td>
             <td>${momStr}</td>
             <td><span style="color:#e2e8f0; font-size:0.85rem;">${escapeHtml(trackCountStr)}</span></td>
             <td><code style="background:rgba(99,102,241,0.1); color:#a5b4fc; padding:3px 8px; border-radius:4px; font-size:0.8rem;">${escapeHtml(topSource)}</code></td>
