@@ -706,7 +706,8 @@ async def evaluate_statements(
     is_gross: bool = Form(False),
     distributor_fee_pct: Optional[float] = Form(None),
     r_win: int = Form(3),
-    payment_schedule_json: Optional[str] = Form(None)
+    payment_schedule_json: Optional[str] = Form(None),
+    custom_rho: Optional[float] = Form(None)
 ):
     """
     Main Valuation Endpoint (Stage 5):
@@ -776,7 +777,8 @@ async def evaluate_statements(
         distributor_fee=f_dist,
         r_win=r_win,
         payment_tranches=tranches,
-        artist_metadata=artist_meta
+        artist_metadata=artist_meta,
+        custom_rho=custom_rho
     )
 
     # Attach parser provenance so the frontend can show how each file was parsed

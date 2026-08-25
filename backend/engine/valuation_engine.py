@@ -31,7 +31,8 @@ class ValuationEngine:
         distributor_fee: Optional[float] = None,
         r_win: int = 3,
         payment_tranches: Optional[List[Dict[str, Any]]] = None,
-        artist_metadata: Optional[Dict[str, Any]] = None
+        artist_metadata: Optional[Dict[str, Any]] = None,
+        custom_rho: Optional[float] = None
     ) -> Dict[str, Any]:
         """
         Execute full valuation pipeline on normalized statement rows.
@@ -88,7 +89,8 @@ class ValuationEngine:
             pay_through=pay_through,
             post_recoup_share=post_recoup_share,
             r_win=r_win,
-            config=self.config
+            config=self.config,
+            custom_rho=custom_rho
         )
 
         # Step 7, 8, 9, 10: New-Release Advance

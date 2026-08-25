@@ -252,7 +252,8 @@ def compute_catalog_advance(
     pay_through: float = 0.0,
     post_recoup_share: float = 1.0,
     r_win: int = 3,
-    config: Optional[Dict[str, Any]] = None
+    config: Optional[Dict[str, Any]] = None,
+    custom_rho: Optional[float] = None
 ) -> CatalogValuationResult:
     """
     Execute full Catalogue Pricing (Phase C, Steps 4, 5, 6).
@@ -298,12 +299,14 @@ def compute_catalog_advance(
     
     risk_discount = min(cfg.get("RISK_MAX", 0.55), available_risk_sum * term_sens)
 
-    # K_base(T) = K_table[T]
-    k_table = cfg.get("K_TABLE", {1: 10.797, 2: 20.816, 3: 29.211, 5: 36.028})
-    k_base = k_table.get(term, 29.211)
-
-    # Derived recoupment split rho(T) = K_base(T) / (12 * T)
-    rho_t = k_base / (12.0 * term)
+    # Custom or Table-based Recoupment Split (rho)
+    if custom_rho is not None and isinstance(custom_rho, (int, float)) and 0.0 < custom_rho <= 1.0:
+        rho_t = float(custom_rho)
+        k_base = rho_t * 12.0 * term
+    else:
+        k_table = cfg.get("K_TABLE", {1: 10.797, 2: 20.816, 3: 29.211, 5: 36.028})
+        k_base = k_table.get(term, 29.211)
+        rho_t = k_base / (12.0 * term)
 
     # K(T) = K_base(T) * (1 - risk_discount)
     k_t = k_base * (1.0 - risk_discount)

@@ -12,6 +12,7 @@ const state = {
   dealTerms: {
     rightsScope: 'sound_recording',
     term: 3,
+    customRho: 'auto',
     payThroughPct: 0,
     postRecoupSharePct: 100,
     singlesContracted: 0,
@@ -74,14 +75,14 @@ function handleStage1Proceed() {
   } else if (!state.selectedArtist) {
     selectArtist('Islem-23', 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces', 'spotify:artist:4m5hXq7Z8W3Z');
   }
-  goToStage(3);
+  goToStage(4);
 }
 
 // Stage Navigation
 function goToStage(stageNum) {
-  // If Stage 2 requested, redirect to Stage 3 (bypassing manual revenue entry)
-  if (stageNum === 2) {
-    stageNum = 3;
+  // If Stage 2 or 3 requested, redirect directly to Stage 4 (Upload Reports)
+  if (stageNum === 2 || stageNum === 3) {
+    stageNum = 4;
   }
 
   if (stageNum > 1 && !state.selectedArtist) {
@@ -105,12 +106,11 @@ function goToStage(stageNum) {
   const activeSec = document.getElementById(`stage${stageNum}`);
   if (activeSec) activeSec.classList.add('active');
 
-  // Update wizard top indicator
+  // Update wizard top indicator (3 clean steps)
   document.querySelectorAll('.wizard-step').forEach(step => step.classList.remove('active'));
   if (stageNum === 1) document.getElementById('stepIndicator1')?.classList.add('active');
-  else if (stageNum === 3) document.getElementById('stepIndicator2')?.classList.add('active');
-  else if (stageNum === 4) document.getElementById('stepIndicator3')?.classList.add('active');
-  else if (stageNum === 5) document.getElementById('stepIndicator4')?.classList.add('active');
+  else if (stageNum === 4) document.getElementById('stepIndicator2')?.classList.add('active');
+  else if (stageNum === 5) document.getElementById('stepIndicator3')?.classList.add('active');
 
   lucide.createIcons();
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1327,11 +1327,52 @@ function loadSampleDataset(datasetKey) {
   updateEstimateCalculations();
 }
 
+// Stage 5 Admin Deal Controls (Real-Time Output Updates)
+function selectFinalTerm(term, elem) {
+  state.dealTerms.term = parseInt(term, 10);
+  if (elem && elem.parentElement) {
+    elem.parentElement.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
+    elem.classList.add('active');
+  }
+  executeValuation();
+}
+
+function selectPreRecoupSplit(rhoVal, elem) {
+  if (rhoVal === 'auto') {
+    state.dealTerms.customRho = 'auto';
+  } else {
+    state.dealTerms.customRho = parseFloat(rhoVal);
+  }
+  if (elem && elem.parentElement) {
+    elem.parentElement.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
+    elem.classList.add('active');
+  }
+  executeValuation();
+}
+
+function updateFinalPostRecoupShare(val) {
+  const num = parseFloat(val);
+  state.dealTerms.postRecoupSharePct = num;
+  const badge = document.getElementById('finalPostRecoupValBadge');
+  if (badge) badge.innerText = `${num}%`;
+  executeValuation();
+}
+
+function updateFinalContractedSingles(val) {
+  const num = parseInt(val, 10);
+  state.dealTerms.singlesContracted = num;
+  const badge = document.getElementById('finalSinglesValBadge');
+  if (badge) badge.innerText = `${num} single${num !== 1 ? 's' : ''}`;
+  executeValuation();
+}
+
 // Stage 5: Valuation Execution & Rendering
 async function executeValuation() {
   const btn = document.getElementById('calculateExactBtn');
-  btn.innerHTML = `<i data-lucide="loader-2" class="spin"></i> Calculating Exact Advance...`;
-  btn.disabled = true;
+  if (btn) {
+    btn.innerHTML = `<i data-lucide="loader-2" class="spin"></i> Calculating Exact Advance...`;
+    btn.disabled = true;
+  }
 
   try {
     const formData = new FormData();
@@ -1346,13 +1387,17 @@ async function executeValuation() {
     formData.append('spotify_id', state.selectedArtist.spotifyId);
     formData.append('distributor', state.selectedDistributor.name);
     formData.append('term_years', state.dealTerms.term);
-    formData.append('pay_through_pct', state.dealTerms.payThroughPct);
+    formData.append('pay_through_pct', 0);
     formData.append('post_recoup_share_pct', state.dealTerms.postRecoupSharePct);
     formData.append('singles_contracted', state.dealTerms.singlesContracted);
     formData.append('rights_scope', state.dealTerms.rightsScope);
     formData.append('is_gross', state.dealTerms.isGross);
     formData.append('distributor_fee_pct', state.dealTerms.distributorFeePct);
     formData.append('k_mode', state.dealTerms.kMode);
+    
+    if (state.dealTerms.customRho && state.dealTerms.customRho !== 'auto') {
+      formData.append('custom_rho', state.dealTerms.customRho);
+    }
 
     const res = await fetch('/api/valuation', {
       method: 'POST',
@@ -1369,8 +1414,10 @@ async function executeValuation() {
   } catch (err) {
     console.warn('Backend API offline, running deterministic client valuation engine fallback.', err);
   } finally {
-    btn.innerHTML = `<i data-lucide="calculator"></i> CALCULATE EXACT ADVANCE`;
-    btn.disabled = false;
+    if (btn) {
+      btn.innerHTML = `<i data-lucide="calculator"></i> CALCULATE EXACT ADVANCE`;
+      btn.disabled = false;
+    }
   }
 
   // Pure deterministic client-side engine execution
@@ -1383,14 +1430,19 @@ async function executeValuation() {
 function runClientSideDeterministicEngine() {
   const R0 = state.declaredMonthlyRevenue || 3400.0;
   const T = state.dealTerms.term;
-  const p = state.dealTerms.payThroughPct / 100.0;
+  const p = 0;
   const e = state.dealTerms.postRecoupSharePct / 100.0;
   const N = state.dealTerms.singlesContracted;
 
-  const kMap = { 1: 10.797, 2: 20.816, 3: 29.211, 5: 36.028 };
-  const rhoMap = { 1: 0.90, 2: 0.80, 3: 0.70, 5: 0.60 };
-  const kTable = kMap[T] || 29.211;
-  const rhoT = rhoMap[T] || 0.70;
+  const kMap = { 1: 10.797, 2: 20.816, 3: 29.211, 5: 36.028, 8: 48.0 };
+  const rhoMap = { 1: 0.90, 2: 0.80, 3: 0.70, 5: 0.60, 8: 0.50 };
+  let kTable = kMap[T] || 29.211;
+  let rhoT = rhoMap[T] || 0.70;
+
+  if (state.dealTerms.customRho && state.dealTerms.customRho !== 'auto' && typeof state.dealTerms.customRho === 'number') {
+    rhoT = state.dealTerms.customRho;
+    kTable = rhoT * 12.0 * T;
+  }
 
   // E(e) Closed Form
   const c = 0.296880;

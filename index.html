@@ -71,14 +71,11 @@
           <div class="wizard-step active" id="stepIndicator1" onclick="goToStage(1)">
             <span class="step-num">1</span> <span class="step-label">NEW DEAL</span>
           </div>
-          <div class="wizard-step" id="stepIndicator2" onclick="if(state.selectedArtist) goToStage(3)">
-            <span class="step-num">2</span> <span class="step-label">VIEW QUOTES</span>
+          <div class="wizard-step" id="stepIndicator2" onclick="if(state.selectedArtist) goToStage(4)">
+            <span class="step-num">2</span> <span class="step-label">UPLOAD REPORTS</span>
           </div>
-          <div class="wizard-step" id="stepIndicator3" onclick="if(state.selectedArtist) goToStage(4)">
-            <span class="step-num">3</span> <span class="step-label">UPLOAD REPORTS</span>
-          </div>
-          <div class="wizard-step" id="stepIndicator4" onclick="if(state.hasUploadedValidData) goToStage(5)">
-            <span class="step-num">4</span> <span class="step-label">EXACT ADVANCE</span>
+          <div class="wizard-step" id="stepIndicator3" onclick="if(state.hasUploadedValidData || state.sampleDatasetLoaded) goToStage(5)">
+            <span class="step-num">3</span> <span class="step-label">EXACT ADVANCE</span>
           </div>
         </div>
         <div class="top-user-actions">
@@ -188,118 +185,6 @@
             <button class="btn-primary-purple btn-large" id="stage1NextBtn" onclick="handleStage1Proceed()">
               <span>GET STARTED</span> <i data-lucide="arrow-right"></i>
             </button>
-          </div>
-        </section>
-
-
-        <!-- ================= STAGE 3: VIEW QUOTES (DEAL DETAILS & ESTIMATOR) ================= -->
-        <section id="stage3" class="stage-section">
-          <div class="deal-estimator-container animate-fade-in">
-
-            <!-- Left Side: Deal Details Controls -->
-            <div class="glass-panel deal-details-panel">
-              <div class="panel-header-row">
-                <h2 class="panel-heading">Deal <span class="text-gradient">Details</span></h2>
-                <button class="btn-text-ghost" onclick="toggleSongwritingModal()">
-                  <i data-lucide="plus-circle"></i> ADD SONG WRITING
-                </button>
-              </div>
-
-              <!-- Rights Included -->
-              <div class="deal-option-block">
-                <label class="deal-option-label">
-                  Rights Included
-                  <span class="tooltip-icon"
-                    title="Sound recording rights are empirically calibrated. Songwriting triggers out-of-scope flag."><i
-                      data-lucide="help-circle"></i></span>
-                </label>
-                <div class="segment-button-group">
-                  <button class="segment-btn active" data-scope="sound_recording"
-                    onclick="selectRightsScope('sound_recording', this)">SOUND RECORDING</button>
-                  <button class="segment-btn" data-scope="songwriting"
-                    onclick="selectRightsScope('songwriting', this)">SONG WRITING</button>
-                  <button class="segment-btn" data-scope="both" onclick="selectRightsScope('both', this)">BOTH</button>
-                </div>
-              </div>
-
-              <!-- Term Length -->
-              <div class="deal-option-block">
-                <label class="deal-option-label">
-                  Term Length
-                  <span class="tooltip-icon" title="Supported contract duration (1, 2, 3, 5, or 8 years)."><i
-                      data-lucide="help-circle"></i></span>
-                </label>
-                <div class="segment-button-group" id="termButtonGroup">
-                  <button class="segment-btn" data-term="1" onclick="selectTerm(1, this)">1 YEAR</button>
-                  <button class="segment-btn" data-term="2" onclick="selectTerm(2, this)">2 YEARS</button>
-                  <button class="segment-btn active" data-term="3" onclick="selectTerm(3, this)">3 YEARS</button>
-                  <button class="segment-btn" data-term="5" onclick="selectTerm(5, this)">5 YEARS</button>
-                  <button class="segment-btn" data-term="8" onclick="selectTerm(8, this)">8 YEARS</button>
-                </div>
-              </div>
-
-              <!-- Pay-Through % -->
-              <div class="deal-option-block">
-                <label class="deal-option-label">
-                  Percent of Income Paid Through Before Recoupment
-                  <span class="tooltip-icon"
-                    title="Share of royalty income routed directly to the artist during recoupment."><i
-                      data-lucide="help-circle"></i></span>
-                </label>
-                <div class="segment-button-group" id="payThroughButtonGroup">
-                  <button class="segment-btn active" data-pt="0" onclick="selectPayThrough(0, this)">0%</button>
-                  <button class="segment-btn" data-pt="10" onclick="selectPayThrough(10, this)">10%</button>
-                  <button class="segment-btn" data-pt="20" onclick="selectPayThrough(20, this)">20%</button>
-                  <button class="segment-btn" data-pt="30" onclick="selectPayThrough(30, this)">30%</button>
-                  <button class="segment-btn" data-pt="40" onclick="selectPayThrough(40, this)">40%</button>
-                  <button class="segment-btn" data-pt="50" onclick="selectPayThrough(50, this)">50%</button>
-                </div>
-              </div>
-
-              <!-- Post-recoupment share slider -->
-              <div class="deal-option-block">
-                <div class="slider-header-row">
-                  <label class="deal-option-label">Post-Recoupment Artist Share ($e$)</label>
-                  <span class="slider-badge" id="postRecoupValBadge">100% (ends at recoupment)</span>
-                </div>
-                <input type="range" id="postRecoupSlider" min="0" max="100" value="100" step="1"
-                  oninput="updatePostRecoupShare(this.value)">
-              </div>
-
-              <!-- Contracted New Singles (N) -->
-              <div class="deal-option-block">
-                <div class="slider-header-row">
-                  <label class="deal-option-label">Contracted New Singles ($N$)</label>
-                  <span class="slider-badge" id="singlesValBadge">0 singles (Catalog Only)</span>
-                </div>
-                <input type="range" id="singlesSlider" min="0" max="20" value="0" step="1"
-                  oninput="updateContractedSingles(this.value)">
-              </div>
-            </div>
-
-            <!-- Right Side: Estimate Card -->
-            <div class="glass-panel estimate-quote-panel">
-              <h3 class="estimate-heading">Your Advance Estimate</h3>
-              <div class="estimate-sub">Between</div>
-              <div class="estimate-number-hero" id="estRangeLow">$17,700</div>
-              <div class="estimate-sub">and</div>
-              <div class="estimate-number-hero" id="estRangeHigh">$39,900</div>
-
-              <div class="estimate-disclaimer">
-                <i data-lucide="info"></i>
-                Based on $<span id="estDeclaredDisplay">3,400</span>/month declared run-rate and <span
-                  id="estTermDisplay">3</span>-year term.
-              </div>
-
-              <button class="btn-primary-purple btn-hero" onclick="goToStage(4)">
-                <span>GET FUNDING NOW</span>
-              </button>
-
-              <a href="#" class="link-fineprint"
-                onclick="alert('Pricing is subject to verification of at least 6 months of historical royalty statement reports.'); return false;">Read
-                the Fine Print</a>
-            </div>
-
           </div>
         </section>
 
