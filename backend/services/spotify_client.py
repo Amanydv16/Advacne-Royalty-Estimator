@@ -12,6 +12,8 @@ import csv
 import base64
 import math
 import ssl
+import difflib
+import unicodedata
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -25,66 +27,6 @@ try:
 except Exception:
     SSL_CONTEXT = None
 
-
-class SpotifyClient:
-    """
-    Centralized, thread-safe Spotify API client.
-    Supports Client Credentials, token caching, stampede protection, and automatic 401 retry.
-    """
-
-    def __init__(self):
-        self._load_env_file()
-        self.client_id = os.environ.get("SPOTIFY_CLIENT_ID", "").strip()
-        self.client_secret = os.environ.get("SPOTIFY_CLIENT_SECRET", "").strip()
-        self.openai_api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-
-        self._token: Optional[str] = None
-        self._expires_at: float = 0.0
-        self._lock = threading.Lock()
-
-        # In-memory search cache with TTL
-        self._search_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
-        self._cache_ttl = 300.0  # 5 minutes
-        self._cache_lock = threading.Lock()
-
-        # Keyless Spotify identity resolution (MusicBrainz -> Spotify ID -> oEmbed).
-        # Resolutions are stable, so they are cached for the process lifetime.
-        self._resolve_cache: Dict[str, Optional[Dict[str, Any]]] = {}
-        self._oembed_cache: Dict[str, Optional[Dict[str, Any]]] = {}
-        self._resolve_lock = threading.Lock()
-
-        # MusicBrainz asks for <= 1 request/second. Serialize and pace our calls
-        # so bursts of typeahead traffic never get us throttled or banned.
-        self._mb_lock = threading.Lock()
-        self._mb_last_call: float = 0.0
-
-    @property
-    def has_credentials(self) -> bool:
-        """True when a Spotify app Client ID/Secret is configured."""
-        return bool(self.client_id and self.client_secret)
-
-    def _load_env_file(self):
-        # Look next to the project root (two levels up from backend/services/) first,
-        # then the working directory, so the server works regardless of where it is started.
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        for env_path in (os.path.join(project_root, ".env"), os.path.join(os.getcwd(), ".env")):
-            if not os.path.exists(env_path):
-                continue
-            try:
-                with open(env_path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            k, v = line.split("=", 1)
-                            k = k.strip()
-                            v = v.strip().strip("'").strip('"')
-                            if k not in os.environ:
-                                os.environ[k] = v
-            except Exception:
-                pass
-
-
-import unicodedata
 
 BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 EMBED_TOKEN_SOURCE = "https://open.spotify.com/embed/artist/3TVXtAsR1Inumwj472S9r4"
@@ -392,32 +334,184 @@ class SpotifyClient:
                 return res
 
         # 1. Try Spotify API (OAuth or Anonymous Token)
-        spotify_results = self._search_spotify_api(q, limit)
-        if spotify_results and len(spotify_results) > 0:
+        spotify_results = self._search_spotify_api(q, limit) or []
+
+        # Only trust the Spotify page if something on it actually resembles the query.
+        # A page where every candidate scores TIER_NONE means Spotify's fuzzy matcher
+        # drifted off the query entirely -- returning it as-is is how a typed name used
+        # to come back as an unrelated but popular artist.
+        best_tier = max((self.match_tier(q, a.get("name", "")) for a in spotify_results), default=self.TIER_NONE)
+        if spotify_results and best_tier > self.TIER_NONE:
             with self._cache_lock:
                 self._search_cache[cache_key] = (now + 600.0, spotify_results[:limit])
             return spotify_results[:limit]
 
-        # 2. Fallback Cascade (Deezer API + iTunes Search API)
+        # 2. Fallback Cascade (Deezer API + iTunes Search API), merged with any weak
+        #    Spotify hits so a real Spotify profile is never dropped outright.
         fallback_results = self._search_fallback_cascade(q, limit)
+        merged = self._rank_candidates(q, list(spotify_results) + list(fallback_results))
         with self._cache_lock:
-            self._search_cache[cache_key] = (now + 600.0, fallback_results[:limit])
+            self._search_cache[cache_key] = (now + 600.0, merged[:limit])
 
-        return fallback_results[:limit]
+        return merged[:limit]
+
+    # Relevance tiers, highest first. Kept as named constants so the ordering
+    # contract is explicit rather than buried in magic numbers.
+    TIER_EXACT_LITERAL = 105  # "sam" -> "Sam", ahead of the accent-folded "Şam"
+    TIER_EXACT = 100          # "drake" -> "Drake" (accent/punctuation insensitive)
+    TIER_EXACT_LOOSE = 95     # same words, different spacing/punctuation
+    TIER_PREFIX = 90          # typeahead: "dra" -> "Drake"
+    TIER_QUERY_SUPERSET = 80  # user typed extra context: "drake ovo" -> "Drake"
+    TIER_ALL_TOKENS = 70      # every query word matches a name word, any order
+    TIER_SUBSTRING = 55       # "weeknd" -> "The Weeknd"
+    TIER_FUZZY_STRONG = 50    # typo-tolerant: "taylor swfit" -> "Taylor Swift"
+    TIER_FUZZY = 40
+    TIER_FUZZY_WEAK = 25
+    TIER_NONE = 0
+
+    @classmethod
+    def match_tier(cls, query: str, name: str) -> int:
+        """
+        Grade how well an artist name answers the typed query.
+
+        Replaces the old flat `relevance = 200` catch-all, which threw away Spotify's
+        own ordering and left every near-miss to be decided by raw popularity -- the
+        reason a typo or partial name used to surface the most famous artist on the
+        page instead of the one that was actually typed.
+        """
+        norm_q = cls.normalize_text(query)
+        comp_q = cls.compact(query)
+        if not comp_q:
+            return cls.TIER_NONE
+
+        norm_a = cls.normalize_text(name)
+        comp_a = cls.compact(name)
+        if not comp_a:
+            return cls.TIER_NONE
+
+        # A literal (case-insensitive) match outranks an accent-folded one, so typing
+        # "Sam" prefers "Sam" over "Şam". Folding still applies at every lower tier,
+        # which keeps "beyonce" -> "Beyoncé" working when no literal match exists.
+        if name.strip().casefold() == query.strip().casefold():
+            return cls.TIER_EXACT_LITERAL
+
+        if comp_a == comp_q:
+            return cls.TIER_EXACT
+        if norm_a == norm_q:
+            return cls.TIER_EXACT_LOOSE
+        if comp_a.startswith(comp_q):
+            return cls.TIER_PREFIX
+        # The typed query contains the full artist name plus extra words.
+        if len(comp_a) >= 3 and comp_q.startswith(comp_a):
+            return cls.TIER_QUERY_SUPERSET
+
+        q_tokens = [t for t in norm_q.split(" ") if t]
+        a_tokens = [t for t in norm_a.split(" ") if t]
+        # Order-independent token match. This is what makes multi-word queries work:
+        # the previous `any(w.startswith(norm_q))` test could never fire once norm_q
+        # contained a space, so "taylor sw" fell straight through to the catch-all.
+        if q_tokens and a_tokens and all(
+            any(a_tok == q_tok or a_tok.startswith(q_tok) for a_tok in a_tokens)
+            for q_tok in q_tokens
+        ):
+            return cls.TIER_ALL_TOKENS
+
+        if comp_q in comp_a:
+            return cls.TIER_SUBSTRING
+
+        ratio = difflib.SequenceMatcher(None, comp_q, comp_a).ratio()
+        if ratio >= 0.86:
+            return cls.TIER_FUZZY_STRONG
+        if ratio >= 0.72:
+            return cls.TIER_FUZZY
+        if ratio >= 0.55:
+            return cls.TIER_FUZZY_WEAK
+        return cls.TIER_NONE
+
+    @classmethod
+    def _closeness_bucket(cls, query: str, name: str) -> int:
+        """
+        Coarse "how much longer than the query is this name" bucket (3 = tightest).
+
+        Bucketed rather than raw so that popularity still decides between comparably
+        close names -- "the week" should resolve to The Weeknd, not The Weeks -- while
+        a dramatically longer name ("Dragonforce" for "dra") still loses to a tight one.
+        """
+        extra = len(cls.compact(name)) - len(cls.compact(query))
+        if extra <= 2:
+            return 3
+        if extra <= 6:
+            return 2
+        if extra <= 15:
+            return 1
+        return 0
+
+    def _rank_candidates(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Sort scored candidates by (tier, closeness, popularity, followers, Spotify's own rank).
+
+        Spotify's original result order is retained as the final tiebreak so its relevance
+        signal is used rather than discarded whenever our own signals are inconclusive.
+        """
+        for c in candidates:
+            c["_tier"] = self.match_tier(query, c.get("name", ""))
+            c["_close"] = self._closeness_bucket(query, c.get("name", ""))
+            c["_folscore"] = int(math.log10(max(1, c.get("followers", 0) or 0)) * 10)
+
+        candidates.sort(
+            key=lambda c: (
+                c["_tier"],
+                c["_close"],
+                c.get("popularity", 0) or 0,
+                c["_folscore"],
+                -c.get("_rank", 0),
+            ),
+            reverse=True,
+        )
+        for c in candidates:
+            c.pop("_tier", None)
+            c.pop("_close", None)
+            c.pop("_folscore", None)
+            c.pop("_rank", None)
+        return candidates
+
+    def _spotify_search_page(self, q_string: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Single Spotify /v1/search?type=artist call. Returns raw items (never None)."""
+        encoded_q = urllib.parse.quote(q_string)
+        capped = max(1, min(int(limit), 50))  # Spotify rejects limit > 50
+        data = self._execute_request(
+            f"https://api.spotify.com/v1/search?q={encoded_q}&type=artist&limit={capped}"
+        )
+        items = (data or {}).get("artists", {}).get("items")
+        return items if isinstance(items, list) else []
 
     def _search_spotify_api(self, query: str, limit: int) -> Optional[List[Dict[str, Any]]]:
-        """Queries Spotify API and applies NFD relevance ranking."""
-        encoded_q = urllib.parse.quote(query)
-        data = self._execute_request(f"https://api.spotify.com/v1/search?q={encoded_q}&type=artist&limit={max(limit, 50)}")
-        items = (data or {}).get("artists", {}).get("items")
-        if not items or not isinstance(items, list):
+        """
+        Queries Spotify and applies graded relevance ranking.
+
+        When the plain query does not surface an exact-name match, a second pass using
+        Spotify's `artist:"..."` field filter is issued. Spotify's fuzzy relevance often
+        buries an exact but low-popularity artist below page one, which is the main way
+        small/indie artists used to be mis-resolved to a bigger namesake.
+        """
+        items = self._spotify_search_page(query, 50)
+        seen_ids = {it.get("id") for it in items if it.get("id")}
+
+        comp_q = self.compact(query)
+        has_exact = any(self.compact(it.get("name", "")) == comp_q for it in items)
+
+        if not has_exact and len(query.strip()) >= 2:
+            for extra in self._spotify_search_page(f'artist:"{query.strip()}"', 50):
+                e_id = extra.get("id")
+                if e_id and e_id not in seen_ids:
+                    seen_ids.add(e_id)
+                    items.append(extra)
+
+        if not items:
             return None
 
-        norm_q = self.normalize_text(query)
-        comp_q = self.compact(query)
         mapped = []
-
-        for item in items:
+        for rank, item in enumerate(items):
             s_id = item.get("id")
             name = item.get("name")
             if not s_id or not name:
@@ -429,24 +523,9 @@ class SpotifyClient:
             image_url = self.select_best_image_320(item.get("images"))
             spotify_url = item.get("external_urls", {}).get("spotify", f"https://open.spotify.com/artist/{s_id}")
 
-            a_norm = self.normalize_text(name)
-            a_comp = self.compact(name)
-
-            if a_comp == comp_q:
-                relevance = 1000
-            elif a_comp.startswith(comp_q):
-                relevance = 900
-            elif any(w.startswith(norm_q) for w in a_norm.split(" ") if w):
-                relevance = 700
-            elif comp_q in a_comp:
-                relevance = 500
-            else:
-                relevance = 200
-
-            score = relevance * 1000000 + popularity * 10000 + min(followers, 1000000)
-
             mapped.append({
                 "id": s_id,
+                "spotify_id": s_id,
                 "name": name,
                 "followers": followers,
                 "monthlyListeners": self.estimate_monthly_listeners(followers, popularity),
@@ -456,14 +535,10 @@ class SpotifyClient:
                 "verified": followers >= 1000 or popularity >= 30,
                 "spotifyUrl": spotify_url,
                 "source": "spotify",
-                "_score": score
+                "_rank": rank,
             })
 
-        mapped.sort(key=lambda x: x["_score"], reverse=True)
-        for m in mapped:
-            del m["_score"]
-
-        return mapped
+        return self._rank_candidates(query, mapped)
 
     def _search_fallback_cascade(self, query: str, limit: int) -> List[Dict[str, Any]]:
         """Concurrently queries Deezer & iTunes APIs, merging candidates by compact artist name."""
@@ -523,18 +598,45 @@ class SpotifyClient:
         except Exception as e:
             print(f"[SpotifyClient] iTunes fallback notice for {query!r}: {e}")
 
-        # Check canonical map for exact matches if missing
+        # Check canonical map -- EXACT matches only.
+        # The previous `norm_q in normalize_text(key)` substring test meant a query of
+        # "a" or "is" matched "drake"/"islem" and hijacked the whole result set with
+        # hardcoded artists that had nothing to do with what was typed.
         norm_q = self.normalize_text(query)
         for key, artists in self.CANONICAL_SPOTIFY_MAP.items():
-            if self.compact(key) == self.compact(query) or norm_q in self.normalize_text(key):
-                for art in artists:
-                    c_key = self.compact(art.get("name", ""))
-                    if c_key not in candidates:
-                        cand = dict(art)
-                        cand["monthlyListeners"] = self.estimate_monthly_listeners(cand.get("followers", 0), cand.get("popularity", 50))
-                        candidates[c_key] = cand
+            key_matches = self.compact(key) == self.compact(query)
+            for art in artists:
+                if not (key_matches or self.normalize_text(art.get("name", "")) == norm_q):
+                    continue
+                c_key = self.compact(art.get("name", ""))
+                if c_key not in candidates:
+                    cand = self._sanitize_directory_entry(art)
+                    cand["monthlyListeners"] = self.estimate_monthly_listeners(cand.get("followers", 0), cand.get("popularity", 50))
+                    candidates[c_key] = cand
 
-        return list(candidates.values())[:limit]
+        return self._rank_candidates(query, list(candidates.values()))[:limit]
+
+    @classmethod
+    def _sanitize_directory_entry(cls, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Strip forged Spotify identity from curated entries whose ID is not a real
+        22-character Spotify ID.
+
+        Several curated rows carry placeholder IDs ("islem_tn", "4m5hXq7Z8W3Z") yet were
+        emitted as source="spotify" / verified=True with an open.spotify.com link built
+        from that placeholder -- producing a dead link and a wrong artist identity.
+        """
+        cand = dict(entry)
+        sid = (cand.get("id") or "").strip()
+        if not cls.SPOTIFY_ID_RE.match(sid):
+            cand["spotifyUrl"] = ""
+            cand["spotify_id"] = ""
+            cand["verified"] = False
+            cand["source"] = "directory"
+        else:
+            cand["spotify_id"] = sid
+            cand["spotifyUrl"] = f"https://open.spotify.com/artist/{sid}"
+        return cand
 
     @staticmethod
     def _get_json(url: str, headers: Dict[str, str], timeout: float = 3.5) -> Optional[Any]:
@@ -605,6 +707,7 @@ class SpotifyClient:
             return None
 
         target_norm = self.normalize_text(name)
+        target_comp = self.compact(name)
         url = f"https://www.wikidata.org/w/api.php?action=wbsearchentities&search={urllib.parse.quote(name)}&language=en&format=json&limit=5"
         data = self._get_json(url, {"User-Agent": self.MB_USER_AGENT}, 1.5)
 
@@ -614,7 +717,10 @@ class SpotifyClient:
                 continue
             item_label = item.get("label", "")
             item_norm = self.normalize_text(item_label)
-            if not (item_norm == target_norm or item_norm.startswith(target_norm) or target_norm in item_norm):
+            # Require an exact or leading match. The old `target_norm in item_norm`
+            # substring test accepted any label merely containing the query -- "arta"
+            # matched "Sparta" -- and then adopted that entity's Spotify ID wholesale.
+            if not (item_norm == target_norm or self.compact(item_label).startswith(target_comp)):
                 continue
 
             claim_url = f"https://www.wikidata.org/w/api.php?action=wbgetclaims&entity={eid}&property=P1902&format=json"
@@ -673,29 +779,51 @@ class SpotifyClient:
                 return self._resolve_cache[cache_key]
 
         result = None
-
-        # 1. Check Canonical Map
         name_norm = self.normalize_text(name)
-        for key, artists in self.CANONICAL_SPOTIFY_MAP.items():
-            if name_norm == self.normalize_text(key) or name.lower() == key.lower():
-                if artists:
-                    result = dict(artists[0])
-                    break
-            for art in artists:
-                if self.normalize_text(art.get("name", "")) == name_norm:
-                    result = dict(art)
-                    break
-            if result:
-                break
 
-        # 2. Try Wikidata P1902 property lookup
+        # 1. Spotify itself is the authority on Spotify identity -- ask it first.
+        #    This step used to be missing entirely: resolution went straight to the
+        #    curated map and Wikidata, so pressing Enter could bind a real query to a
+        #    placeholder ID or an unrelated Wikidata entity even with working credentials.
+        try:
+            for cand in (self._search_spotify_api(name, 25) or []):
+                if self.match_tier(name, cand.get("name", "")) >= self.TIER_ALL_TOKENS:
+                    result = dict(cand)
+                    break
+        except Exception as e:
+            print(f"[SpotifyClient] Spotify resolution notice for {name!r}: {e}")
+
+        # 2. Curated map, exact name match only.
+        if not result:
+            for key, artists in self.CANONICAL_SPOTIFY_MAP.items():
+                key_matches = name_norm == self.normalize_text(key) or name.lower() == key.lower()
+                for art in artists:
+                    if key_matches or self.normalize_text(art.get("name", "")) == name_norm:
+                        result = self._sanitize_directory_entry(art)
+                        break
+                if result:
+                    break
+
+        # 3. Wikidata P1902 property lookup
         if not result:
             try:
                 result = self._resolve_via_wikidata(name)
             except Exception as e:
                 print(f"[SpotifyClient] Wikidata resolution notice for {name!r}: {e}")
 
-        # 3. Fast streaming lookup without slow MusicBrainz lock for search
+        # 4. Keyless directory fallback (Deezer/iTunes) -- never forges a Spotify link.
+        if not result:
+            try:
+                fallback = self._search_fallback_cascade(name, 5)
+                for cand in fallback:
+                    if self.match_tier(name, cand.get("name", "")) >= self.TIER_ALL_TOKENS:
+                        result = dict(cand)
+                        break
+            except Exception as e:
+                print(f"[SpotifyClient] Directory resolution notice for {name!r}: {e}")
+
+        with self._resolve_lock:
+            self._resolve_cache[cache_key] = result
         return result
 
     def _deezer_search(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
@@ -889,11 +1017,11 @@ class SpotifyClient:
         for key, artists in self.CANONICAL_SPOTIFY_MAP.items():
             key_norm = self.normalize_text(key)
             if q_norm == key_norm or q_clean == key:
-                candidates.extend(artists)
+                candidates.extend(self._sanitize_directory_entry(a) for a in artists)
                 break
             for art in artists:
                 if self.normalize_text(art.get("name", "")) == q_norm:
-                    candidates.append(art)
+                    candidates.append(self._sanitize_directory_entry(art))
 
         encoded_q = urllib.parse.quote(query)
 

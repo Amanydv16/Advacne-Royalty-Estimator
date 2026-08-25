@@ -68,16 +68,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
-function handleStage1Proceed() {
-  const inputVal = (document.getElementById('artistSearchInput')?.value || '').trim();
-  if (!state.selectedArtist && inputVal) {
-    selectArtist(inputVal, 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces', `spotify:artist:${Math.abs(hashString(inputVal))}`);
-  } else if (!state.selectedArtist) {
-    selectArtist('Islem-23', 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces', 'spotify:artist:4m5hXq7Z8W3Z');
-  }
-  goToStage(4);
-}
-
 // Stage Navigation
 function goToStage(stageNum) {
   // If Stage 2 or 3 requested, redirect directly to Stage 4 (Upload Reports)
@@ -85,13 +75,13 @@ function goToStage(stageNum) {
     stageNum = 4;
   }
 
+  // Advancing without a resolved artist used to silently invent one -- a hashed
+  // placeholder ID from the raw input, or a hardcoded "Islem-23" when the box was
+  // empty. Resolve through handleStage1Proceed instead so the artist that gets
+  // carried forward is the one Spotify actually matched.
   if (stageNum > 1 && !state.selectedArtist) {
-    const inputVal = (document.getElementById('artistSearchInput')?.value || '').trim();
-    if (inputVal) {
-      selectArtist(inputVal, 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces', `spotify:artist:${Math.abs(hashString(inputVal))}`);
-    } else {
-      selectArtist('Islem-23', 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces', 'spotify:artist:4m5hXq7Z8W3Z');
-    }
+    handleStage1Proceed(stageNum);
+    return;
   }
 
   if (stageNum === 5 && !state.hasUploadedValidData && !state.sampleDatasetLoaded) {
@@ -100,6 +90,21 @@ function goToStage(stageNum) {
   }
 
   state.currentStage = stageNum;
+
+  // Toggle sidebar visibility: shown ONLY on the first page (Stage 1)
+  const appContainer = document.querySelector('.app') || document.querySelector('.app-layout');
+  const sidebar = document.getElementById('appSidebar') || document.querySelector('aside');
+  if (sidebar && appContainer) {
+    if (stageNum === 1) {
+      sidebar.style.display = 'flex';
+      appContainer.classList.remove('full-width-stage');
+      appContainer.style.gridTemplateColumns = '240px 1fr';
+    } else {
+      sidebar.style.display = 'none';
+      appContainer.classList.add('full-width-stage');
+      appContainer.style.gridTemplateColumns = '1fr';
+    }
+  }
 
   // Toggle stage view
   document.querySelectorAll('.stage-section').forEach(sec => sec.classList.remove('active'));
@@ -334,15 +339,35 @@ function formatFollowers(count) {
   return count.toLocaleString() + ' followers';
 }
 
+// Backing store for the rendered dropdown. Cards dispatch by index instead of by
+// interpolating artist fields into an inline onclick handler: a name containing an
+// apostrophe ("Lil' Kim", "Guns N' Roses", "D'Angelo") terminated the single-quoted
+// JS string literal early, so clicking those rows threw a SyntaxError and selected
+// nothing -- the user then hit Enter and got a fabricated placeholder artist instead.
+let lastRenderedResults = [];
+
+function selectArtistByIndex(idx) {
+  const a = lastRenderedResults[idx];
+  if (!a) return;
+  const isLabel = state.entityType === 'label';
+  const genreText = isLabel
+    ? 'Record Label'
+    : ((a.genres && a.genres.length > 0) ? a.genres.slice(0, 2).join(', ') : 'Artist');
+  const spotifyUrl = a.spotifyUrl
+    || (a.spotify_uri ? `https://open.spotify.com/artist/${a.spotify_uri.replace('spotify:artist:', '')}` : '');
+  selectArtist(a.name, a.imageUrl || a.image || '', a.id || '', genreText, spotifyUrl);
+}
+
 function renderSpotifySearchResults(items, query = '') {
   const container = document.getElementById('spotifySearchResults');
   const safeQuery = (query || '').trim();
   const qNorm = safeQuery.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+  lastRenderedResults = Array.isArray(items) ? items.slice() : [];
   let listHtml = '';
 
   if (items && items.length > 0) {
-    listHtml = items.map(a => {
+    listHtml = items.map((a, idx) => {
       const img = a.imageUrl || a.image || '';
       const hasImg = img && img.trim().length > 0;
       const isLabel = state.entityType === 'label';
@@ -354,13 +379,13 @@ function renderSpotifySearchResults(items, query = '') {
       const popularityPct = a.popularity ? Math.min(100, a.popularity) : null;
 
       return `
-        <div class="artist-suggestion-card" onclick="selectArtist('${escapeHtml(a.name)}', '${img}', '${artistId}', '${escapeHtml(genreText)}', '${escapeHtml(spotifyUrl)}')">
+        <div class="artist-suggestion-card" onclick="selectArtistByIndex(${idx})">
           <div class="artist-suggestion-avatar-wrap">
             ${hasImg
-              ? `<img src="${img}" alt="${escapeHtml(a.name)}" class="artist-suggestion-avatar" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+          ? `<img src="${escapeHtml(img)}" alt="${escapeHtml(a.name)}" class="artist-suggestion-avatar" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
                  <div class="artist-suggestion-avatar-fallback" style="display:none"><i data-lucide="music"></i></div>`
-              : `<div class="artist-suggestion-avatar-fallback"><i data-lucide="music"></i></div>`
-            }
+          : `<div class="artist-suggestion-avatar-fallback"><i data-lucide="music"></i></div>`
+        }
             ${isSpotifyVerified ? `<div class="spotify-verified-dot" title="Verified on Spotify"></div>` : ''}
           </div>
 
@@ -397,9 +422,18 @@ function renderSpotifySearchResults(items, query = '') {
 
   // If query is present, not a URL/URI, and not an exact match, append option for custom small/indie artist
   if (safeQuery && !hasExact && !isUrlOrUri) {
-    const customId = `indie_${Math.abs(hashString(safeQuery))}`;
+    // Appended as a real entry so it is selected by index like every other row --
+    // an apostrophe in the typed name used to break this handler too.
+    const customIdx = lastRenderedResults.length;
+    lastRenderedResults.push({
+      name: safeQuery,
+      id: `indie_${Math.abs(hashString(safeQuery))}`,
+      imageUrl: '',
+      genres: ['Independent Artist'],
+      spotifyUrl: ''
+    });
     const customCard = `
-      <div class="artist-suggestion-card custom-artist-option" style="background: rgba(147, 51, 234, 0.08); border-top: 1px solid rgba(255,255,255,0.08);" onclick="selectArtist('${escapeHtml(safeQuery)}', '', '${customId}', 'Independent Artist', '')">
+      <div class="artist-suggestion-card custom-artist-option" style="background: rgba(147, 51, 234, 0.08); border-top: 1px solid rgba(255,255,255,0.08);" onclick="selectArtistByIndex(${customIdx})">
         <div class="artist-suggestion-avatar-wrap">
           <div class="artist-suggestion-avatar-fallback" style="background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #fff;">
             <i data-lucide="plus"></i>
@@ -463,7 +497,7 @@ async function selectArtist(name, image, artistId, genreText = 'Artist – Sound
   }
 
   const defaultImg = cleanImg || 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces';
-  
+
   state.selectedArtist = {
     name: cleanName,
     image: defaultImg,
@@ -474,12 +508,17 @@ async function selectArtist(name, image, artistId, genreText = 'Artist – Sound
   };
 
   // Update sidebar & chip
-  document.getElementById('sidebarArtistName').innerText = cleanName;
-  document.getElementById('sidebarArtistMeta').innerText = genreText;
-  document.getElementById('sidebarArtistImg').src = defaultImg;
+  const sbName = document.getElementById('sidebarArtistName');
+  if (sbName) sbName.innerText = cleanName;
+  const sbMeta = document.getElementById('sidebarArtistMeta');
+  if (sbMeta) sbMeta.innerText = genreText;
+  const sbImg = document.getElementById('sidebarArtistImg');
+  if (sbImg) sbImg.src = defaultImg;
 
-  document.getElementById('chipArtistName').innerText = cleanName;
-  document.getElementById('chipArtistImg').src = defaultImg;
+  const chipName = document.getElementById('chipArtistName');
+  if (chipName) chipName.innerText = cleanName;
+  const chipImg = document.getElementById('chipArtistImg');
+  if (chipImg) chipImg.src = defaultImg;
 
   document.getElementById('spotifySearchResults').style.display = 'none';
   document.getElementById('artistSearchInput').style.display = 'none';
@@ -500,7 +539,7 @@ async function selectArtist(name, image, artistId, genreText = 'Artist – Sound
     document.getElementById('catStatAlbums').innerText = '--';
     document.getElementById('catalogueTracksStatus').innerHTML = `<i data-lucide="loader-2" class="spin"></i> Fetching Live Tracks...`;
     document.getElementById('catalogueTrackList').innerHTML = `<div style="padding: 12px; text-align: center; color: var(--text-muted); font-size: 0.8rem;"><i data-lucide="loader-2" class="spin"></i> Loading catalogue...</div>`;
-    
+
     const spotLink = document.getElementById('catalogueSpotifyLink');
     if (spotLink) {
       if (cleanUrl) {
@@ -534,8 +573,10 @@ async function fetchArtistDetails(artistId, artistName) {
           const art = details.artist;
           if (art.image && art.image.trim()) {
             state.selectedArtist.image = art.image;
-            document.getElementById('sidebarArtistImg').src = art.image;
-            document.getElementById('chipArtistImg').src = art.image;
+            const sbImg = document.getElementById('sidebarArtistImg');
+            if (sbImg) sbImg.src = art.image;
+            const chipImg = document.getElementById('chipArtistImg');
+            if (chipImg) chipImg.src = art.image;
             const avatarElem = document.getElementById('catalogueArtistAvatar');
             if (avatarElem) avatarElem.src = art.image;
           }
@@ -600,7 +641,7 @@ async function fetchArtistDetails(artistId, artistName) {
           const rollupData = await rollupRes.json();
           state.selectedArtist.soundchartsRollup = rollupData;
         }
-      } catch (e) {}
+      } catch (e) { }
     }
   } catch (err) {
     console.warn('Error loading artist details:', err);
@@ -631,7 +672,7 @@ async function fetchArtistDetailsClientSide(artistId, artistName) {
           });
         });
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // Fallback to iTunes client-side API
@@ -651,7 +692,7 @@ async function fetchArtistDetailsClientSide(artistId, artistName) {
           });
         });
       }
-    } catch (e) {}
+    } catch (e) { }
   }
 
   // Detect distributor from ISRCs
@@ -681,7 +722,7 @@ function renderCatalogueMonthlyStreams(monthlyStreams) {
 
   if (statusElem) statusElem.innerText = '✓ Statement Stream Data';
   const entries = Object.entries(monthlyStreams).sort((a, b) => a[0].localeCompare(b[0]));
-  
+
   const gridHtml = entries.map(([m, val]) => `
     <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:rgba(255,255,255,0.03); border-radius:6px; margin-bottom:4px;">
       <span style="font-weight:600; color:#fff;">${escapeHtml(m)}</span>
@@ -782,62 +823,93 @@ function hashString(str) {
 
 
 
-async function handleStage1Proceed() {
-  if (!state.selectedArtist) {
-    const inputVal = (document.getElementById('artistSearchInput')?.value || '').trim();
-    if (inputVal) {
-      const nextBtn = document.getElementById('stage1NextBtn');
-      const origHtml = nextBtn ? nextBtn.innerHTML : '';
-      if (nextBtn) {
-        nextBtn.innerHTML = `<span>RESOLVING SPOTIFY ID...</span> <i data-lucide="loader-2" class="spin"></i>`;
-        nextBtn.disabled = true;
-        lucide.createIcons();
-      }
-
-      // Check if inputVal is a Spotify URL / URI / ID
-      const sMatch = inputVal.match(/(?:artist\/|spotify:artist:|^)([A-Za-z0-9]{22})/i);
-      if (inputVal.includes('spotify.com') || inputVal.includes('spotify:artist:') || (sMatch && sMatch[1].length === 22)) {
-        const sId = sMatch ? sMatch[1] : inputVal;
-        await selectArtist(inputVal, '', sId, 'Verified Spotify Artist', `https://open.spotify.com/artist/${sId}`);
-        if (nextBtn) { nextBtn.innerHTML = origHtml; nextBtn.disabled = false; }
-        goToStage(2);
-        return;
-      }
-
-      try {
-        const res = await fetch(`/api/spotify/resolve?q=${encodeURIComponent(inputVal)}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.artist && data.artist.id) {
-            const a = data.artist;
-            await selectArtist(
-              a.name || inputVal,
-              a.imageUrl || 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces',
-              a.id,
-              (a.genres && a.genres.length > 0) ? a.genres.slice(0, 2).join(', ') : 'Verified Artist',
-              a.spotifyUrl || ''
-            );
-            if (nextBtn) { nextBtn.innerHTML = origHtml; nextBtn.disabled = false; }
-            goToStage(2);
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn('[Spotify Resolve Notice]', err);
-      } finally {
-        if (nextBtn) { nextBtn.innerHTML = origHtml; nextBtn.disabled = false; }
-      }
-
-      // Graceful fallback
-      await selectArtist(inputVal, 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces', `spotify:artist:${Math.abs(hashString(inputVal))}`);
-      goToStage(2);
-    } else {
-      alert('Please type or select an artist/label name first.');
-      document.getElementById('artistSearchInput')?.focus();
-    }
+async function handleStage1Proceed(targetStage = 2) {
+  if (state.selectedArtist) {
+    goToStage(targetStage);
     return;
   }
-  goToStage(2);
+
+  const inputVal = (document.getElementById('artistSearchInput')?.value || '').trim();
+  if (!inputVal) {
+    alert('Please type or select an artist/label name first.');
+    document.getElementById('artistSearchInput')?.focus();
+    return;
+  }
+
+  const nextBtn = document.getElementById('stage1NextBtn');
+  const origHtml = nextBtn ? nextBtn.innerHTML : '';
+  if (nextBtn) {
+    nextBtn.innerHTML = `<span>RESOLVING SPOTIFY ID...</span> <i data-lucide="loader-2" class="spin"></i>`;
+    nextBtn.disabled = true;
+    lucide.createIcons();
+  }
+
+  const restoreBtn = () => {
+    if (nextBtn) { nextBtn.innerHTML = origHtml; nextBtn.disabled = false; }
+  };
+
+  // Check if inputVal is a Spotify URL / URI / ID
+  const sMatch = inputVal.match(/(?:artist\/|spotify:artist:|^)([A-Za-z0-9]{22})/i);
+  if (inputVal.includes('spotify.com') || inputVal.includes('spotify:artist:') || (sMatch && sMatch[1].length === 22)) {
+    const sId = sMatch ? sMatch[1] : inputVal;
+    await selectArtist(inputVal, '', sId, 'Verified Spotify Artist', `https://open.spotify.com/artist/${sId}`);
+    restoreBtn();
+    goToStage(targetStage);
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/spotify/resolve?q=${encodeURIComponent(inputVal)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.artist && data.artist.id) {
+        const a = data.artist;
+        await selectArtist(
+          a.name || inputVal,
+          a.imageUrl || '',
+          a.id,
+          (a.genres && a.genres.length > 0) ? a.genres.slice(0, 2).join(', ') : 'Verified Artist',
+          a.spotifyUrl || ''
+        );
+        restoreBtn();
+        goToStage(targetStage);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('[Spotify Resolve Notice]', err);
+  }
+
+  // Last resort: fall back to the ranked search endpoint before giving up, so a name
+  // the resolver could not pin down still lands on the best-matching real artist.
+  try {
+    const searchRes = await fetch(`/api/spotify/search?q=${encodeURIComponent(inputVal)}`);
+    if (searchRes.ok) {
+      const searchData = await searchRes.json();
+      const top = (searchData.artists || [])[0];
+      if (top && top.name) {
+        await selectArtist(
+          top.name,
+          top.imageUrl || top.image_url || '',
+          top.id || '',
+          (top.genres && top.genres.length > 0) ? top.genres.slice(0, 2).join(', ') : 'Artist',
+          top.spotifyUrl || top.spotify_url || ''
+        );
+        restoreBtn();
+        goToStage(targetStage);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('[Spotify Search Fallback Notice]', err);
+  }
+
+  // Nothing matched. Carry the typed name forward as an unresolved independent artist
+  // rather than minting a placeholder `spotify:artist:<hash>` ID and a dead profile
+  // link, which made an unmatched artist look like a verified Spotify one.
+  restoreBtn();
+  await selectArtist(inputVal, '', `indie_${Math.abs(hashString(inputVal))}`, 'Independent Artist', '');
+  goToStage(targetStage);
 }
 
 async function toggleSpotifyIdModal() {
@@ -862,7 +934,8 @@ async function toggleSpotifyIdModal() {
     } catch (err) {
       console.warn('[Spotify ID Modal Error]', err);
     }
-    selectArtist(uri.trim(), 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=100&h=100&fit=crop', uri.trim());
+    // Unresolved: keep the typed text as the name, but never reuse it as a Spotify ID.
+    selectArtist(uri.trim(), '', `indie_${Math.abs(hashString(uri.trim()))}`, 'Independent Artist', '');
   }
 }
 
@@ -978,9 +1051,12 @@ function filterDistributorList(query) {
 
 function setBasis(basis) {
   state.dealTerms.isGross = (basis === 'gross');
-  document.getElementById('basisNetBtn').classList.toggle('active', basis === 'net');
-  document.getElementById('basisGrossBtn').classList.toggle('active', basis === 'gross');
-  document.getElementById('grossFeeInputRow').style.display = (basis === 'gross') ? 'flex' : 'none';
+  const netBtn = document.getElementById('basisNetBtn');
+  const grossBtn = document.getElementById('basisGrossBtn');
+  const feeRow = document.getElementById('grossFeeInputRow');
+  if (netBtn) netBtn.classList.toggle('active', basis === 'net');
+  if (grossBtn) grossBtn.classList.toggle('active', basis === 'gross');
+  if (feeRow) feeRow.style.display = (basis === 'gross') ? 'flex' : 'none';
 }
 
 function setupDropzone() {
@@ -1394,7 +1470,7 @@ async function executeValuation() {
     formData.append('is_gross', state.dealTerms.isGross);
     formData.append('distributor_fee_pct', state.dealTerms.distributorFeePct);
     formData.append('k_mode', state.dealTerms.kMode);
-    
+
     if (state.dealTerms.customRho && state.dealTerms.customRho !== 'auto') {
       formData.append('custom_rho', state.dealTerms.customRho);
     }
@@ -1415,7 +1491,7 @@ async function executeValuation() {
     console.warn('Backend API offline, running deterministic client valuation engine fallback.', err);
   } finally {
     if (btn) {
-      btn.innerHTML = `<i data-lucide="calculator"></i> CALCULATE EXACT ADVANCE`;
+      btn.innerHTML = `<span>Calculate exact advance</span>`;
       btn.disabled = false;
     }
   }
@@ -1491,28 +1567,28 @@ function runClientSideDeterministicEngine() {
       risk_discount_pct: 12.4,
       top_songs: (state.selectedArtist && state.selectedArtist.catalogTracks && state.selectedArtist.catalogTracks.length > 0)
         ? state.selectedArtist.catalogTracks.map((tr, idx, arr) => {
-            const num = arr.length;
-            const share = (num <= 3) ? (1.0 / num) : ((idx < 3) ? (0.75 / 3) : (0.25 / (num - 3)));
-            const mRev = Math.round(R0 * share);
-            const advAlloc = Math.round(aCatalog * share);
-            return {
-              title: tr.title || tr.name || `Track ${idx+1}`,
-              identifier: tr.isrc || `USROYAL${(state.selectedArtist.name || 'ART').substring(0, 3).toUpperCase()}${idx+1}`,
-              artwork: tr.artwork || tr.image || '',
-              album: tr.album || 'Single',
-              share: share,
-              monthly_growth_rate: -0.012,
-              severity: 0.12,
-              monthly_rev: mRev,
-              advance_allocation: advAlloc
-            };
-          })
+          const num = arr.length;
+          const share = (num <= 3) ? (1.0 / num) : ((idx < 3) ? (0.75 / 3) : (0.25 / (num - 3)));
+          const mRev = Math.round(R0 * share);
+          const advAlloc = Math.round(aCatalog * share);
+          return {
+            title: tr.title || tr.name || `Track ${idx + 1}`,
+            identifier: tr.isrc || `USROYAL${(state.selectedArtist.name || 'ART').substring(0, 3).toUpperCase()}${idx + 1}`,
+            artwork: tr.artwork || tr.image || '',
+            album: tr.album || 'Single',
+            share: share,
+            monthly_growth_rate: -0.012,
+            severity: 0.12,
+            monthly_rev: mRev,
+            advance_allocation: advAlloc
+          };
+        })
         : [
-            { title: 'Top Hit Single', identifier: 'USROYAL001', share: 0.385, monthly_growth_rate: -0.012, severity: 0.12, monthly_rev: Math.round(R0 * 0.385), advance_allocation: Math.round(aCatalog * 0.385) },
-            { title: 'Lead Track 2', identifier: 'USROYAL002', share: 0.224, monthly_growth_rate: -0.024, severity: 0.24, monthly_rev: Math.round(R0 * 0.224), advance_allocation: Math.round(aCatalog * 0.224) },
-            { title: 'Acoustic Version', identifier: 'USROYAL003', share: 0.110, monthly_growth_rate: 0.005, severity: 0.00, monthly_rev: Math.round(R0 * 0.110), advance_allocation: Math.round(aCatalog * 0.110) },
-            { title: 'Remix Club Edit', identifier: 'USROYAL004', share: 0.073, monthly_growth_rate: -0.045, severity: 0.45, monthly_rev: Math.round(R0 * 0.073), advance_allocation: Math.round(aCatalog * 0.073) }
-          ]
+          { title: 'Top Hit Single', identifier: 'USROYAL001', share: 0.385, monthly_growth_rate: -0.012, severity: 0.12, monthly_rev: Math.round(R0 * 0.385), advance_allocation: Math.round(aCatalog * 0.385) },
+          { title: 'Lead Track 2', identifier: 'USROYAL002', share: 0.224, monthly_growth_rate: -0.024, severity: 0.24, monthly_rev: Math.round(R0 * 0.224), advance_allocation: Math.round(aCatalog * 0.224) },
+          { title: 'Acoustic Version', identifier: 'USROYAL003', share: 0.110, monthly_growth_rate: 0.005, severity: 0.00, monthly_rev: Math.round(R0 * 0.110), advance_allocation: Math.round(aCatalog * 0.110) },
+          { title: 'Remix Club Edit', identifier: 'USROYAL004', share: 0.073, monthly_growth_rate: -0.045, severity: 0.45, monthly_rev: Math.round(R0 * 0.073), advance_allocation: Math.round(aCatalog * 0.073) }
+        ]
     },
     new_release_analytics: N > 0 ? {
       observable_releases_count: 4,
@@ -1588,25 +1664,27 @@ function renderValuationDashboard(data) {
     topTable.innerHTML = (songList || []).map((s, idx) => {
       const title = s.title || s.name || `Recording ${idx + 1}`;
       const isrc = s.identifier || s.isrc || `ISRC-${idx + 1}`;
-      const art = s.artwork || s.image || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=50&h=50&fit=crop';
+      const art = s.artwork || s.image || '';
       const sharePct = (s.share ? (s.share * 100).toFixed(1) : ((1.0 / Math.max(1, songList.length)) * 100).toFixed(1));
       const mRev = s.monthly_rev ? formatCurrency(s.monthly_rev) : formatCurrency(cat.r0 * (parseFloat(sharePct) / 100));
       const advAlloc = s.advance_allocation ? formatCurrency(s.advance_allocation) : formatCurrency(headlines.a_catalog * (parseFloat(sharePct) / 100));
+      const coverClass = `cover c${(idx % 4) + 2}`;
 
       return `
         <tr>
           <td>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <img src="${escapeHtml(art)}" alt="${escapeHtml(title)}" style="width:28px; height:28px; border-radius:4px; object-fit:cover;" onerror="this.src='https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=50&h=50&fit=crop';">
+            <div class="track">
+              ${art ? `<img src="${escapeHtml(art)}" alt="${escapeHtml(title)}" class="cover" style="object-fit:cover;" onerror="this.outerHTML='<div class=\\'${coverClass}\\'></div>'">` : `<div class="${coverClass}"></div>`}
               <div>
-                <strong>${escapeHtml(title)}</strong>
+                <div class="nm">${escapeHtml(title)}</div>
+                <div class="meta">${escapeHtml(isrc)}</div>
               </div>
             </div>
           </td>
-          <td><code style="background:rgba(99,102,241,0.1); color:#a5b4fc; padding:2px 6px; border-radius:4px; font-size:0.75rem;">${escapeHtml(isrc)}</code></td>
-          <td><strong style="color:#38bdf8;">${sharePct}%</strong></td>
-          <td>${mRev}/mo</td>
-          <td><strong style="color:#c084fc;">${advAlloc}</strong></td>
+          <td><span style="font-family: var(--mt-font-mono); font-size: 11px; color: var(--mt-fg-3);">${escapeHtml(isrc)}</span></td>
+          <td><strong style="font-family: var(--mt-font-mono); color: var(--mt-fg-1);">${sharePct}%</strong></td>
+          <td class="r amt">${mRev}/mo</td>
+          <td class="r amt red">${advAlloc}</td>
         </tr>
       `;
     }).join('');
@@ -1636,9 +1714,9 @@ function renderValuationDashboard(data) {
       schedTable.innerHTML = sched.tranches.map(t => `
         <tr>
           <td><strong>${escapeHtml(t.label)}</strong></td>
-          <td><code>${escapeHtml(t.trigger)}</code></td>
-          <td>${(t.share * 100).toFixed(1)}%</td>
-          <td><strong>${formatCurrency(t.amount)}</strong></td>
+          <td><span style="font-family: var(--mt-font-mono); font-size: 11px; color: var(--mt-fg-3);">${escapeHtml(t.trigger)}</span></td>
+          <td style="font-family: var(--mt-font-mono);">${(t.share * 100).toFixed(1)}%</td>
+          <td class="r amt red">${formatCurrency(t.amount)}</td>
         </tr>
       `).join('');
     }
@@ -1648,7 +1726,7 @@ function renderValuationDashboard(data) {
     const schedTable = document.getElementById('scheduleTableBody');
     if (schedTable) {
       schedTable.innerHTML = `
-        <tr><td colspan="4" style="text-align:center; color:var(--text-dim);">No new-release payment milestones for catalog-only deal.</td></tr>
+        <tr><td colspan="4" style="text-align:center; color:var(--mt-fg-3); padding: 14px;">No new-release payment milestones for catalog-only deal.</td></tr>
       `;
     }
   }
@@ -1656,12 +1734,15 @@ function renderValuationDashboard(data) {
   // Flags
   const flagsContainer = document.getElementById('flagsContainer');
   if (flagsContainer) {
-    flagsContainer.innerHTML = (data.detailed_flags || []).map(f => `
-      <div class="flag-badge-card ${f.severity}">
-        <div class="flag-title">${escapeHtml(f.title)}</div>
-        <div class="flag-desc">${escapeHtml(f.description)}</div>
-      </div>
-    `).join('');
+    flagsContainer.innerHTML = (data.detailed_flags || []).map(f => {
+      const isWarn = f.severity === 'warning' || f.severity === 'advisory';
+      return `
+        <div class="flag-badge ${isWarn ? 'flag-warn' : 'flag-pass'}">
+          <span class="dot"></span>
+          <strong>${escapeHtml(f.title)}:</strong> ${escapeHtml(f.description)}
+        </div>
+      `;
+    }).join('');
   }
 
   // ================= RENDER MULTI-YEAR HORIZON & CHART =================
@@ -1707,16 +1788,15 @@ function renderMultiYearHorizon(data) {
     gridElem.innerHTML = estimates.map(est => {
       const isActive = est.term_years === currentTerm;
       return `
-        <div class="year-estimate-card ${isActive ? 'active-term-card' : ''}" onclick="switchValuationTerm(${est.term_years})">
-          <div class="year-card-term-label">${escapeHtml(est.label)}</div>
-          <div class="year-card-total-val">${formatCurrency(est.a_total)}</div>
-          <div class="year-card-breakdown">
-            <div>Cat: <span class="cat-sub">${formatCurrency(est.a_catalog)}</span></div>
-            ${est.a_new > 0 ? `<div>New: <span class="nr-sub">${formatCurrency(est.a_new)}</span></div>` : ''}
+        <div class="year-card ${isActive ? 'active' : ''}" onclick="switchValuationTerm(${est.term_years})">
+          <div class="year-card-title">${escapeHtml(est.label)}</div>
+          <div class="year-card-val">${formatCurrency(est.a_total)}</div>
+          <div class="year-card-sub">
+            Cat: ${formatCurrency(est.a_catalog)} ${est.a_new > 0 ? `· New: ${formatCurrency(est.a_new)}` : ''}
           </div>
-          <div class="year-card-badges">
-            <span class="badge-micro-multiple">${est.k_active || est.k_base}x</span>
-            <span class="badge-micro-rho">${est.rho_t_pct}% ρ</span>
+          <div style="margin-top: 8px; display: flex; gap: 4px;">
+            <span class="pill muted" style="font-size: 10px; padding: 2px 6px;">${est.k_active || est.k_base}x</span>
+            <span class="pill muted" style="font-size: 10px; padding: 2px 6px;">${est.rho_t_pct}% ρ</span>
           </div>
         </div>
       `;
@@ -1735,18 +1815,18 @@ function renderMultiYearHorizon(data) {
     tableBody.innerHTML = estimates.map(est => {
       const isActive = est.term_years === currentTerm;
       return `
-        <tr class="${isActive ? 'matrix-highlight-row' : ''}" onclick="switchValuationTerm(${est.term_years})" style="cursor: pointer;">
+        <tr style="cursor: pointer; ${isActive ? 'background: var(--mt-bg-4);' : ''}" onclick="switchValuationTerm(${est.term_years})">
           <td>
             <strong>${escapeHtml(est.label)}</strong>
-            ${isActive ? ' <span style="font-size:0.7rem; background:var(--primary-purple); color:#fff; padding:1px 5px; border-radius:3px; margin-left:4px;">ACTIVE</span>' : ''}
+            ${isActive ? ' <span class="pill" style="margin-left:6px; font-size:10px; padding:1px 6px;">ACTIVE</span>' : ''}
           </td>
-          <td><strong style="color: ${isActive ? '#fda4af' : '#fff'}; font-size: 1.05rem;">${formatCurrency(est.a_total)}</strong></td>
-          <td><span style="color: #38bdf8;">${formatCurrency(est.a_catalog)}</span></td>
-          <td><span style="color: #c084fc;">${est.a_new > 0 ? formatCurrency(est.a_new) : '—'}</span></td>
-          <td><code>${est.k_active || est.k_base}x</code></td>
-          <td>${est.rho_t_pct}%</td>
-          <td>${est.ttr_years} Yrs</td>
-          <td>${est.risk_discount_pct}%</td>
+          <td class="amt ${isActive ? 'red' : ''}" style="font-size: 14px;"><strong>${formatCurrency(est.a_total)}</strong></td>
+          <td class="amt">${formatCurrency(est.a_catalog)}</td>
+          <td class="amt">${est.a_new > 0 ? formatCurrency(est.a_new) : '—'}</td>
+          <td style="font-family: var(--mt-font-mono);">${est.k_active || est.k_base}x</td>
+          <td style="font-family: var(--mt-font-mono);">${est.rho_t_pct}%</td>
+          <td style="font-family: var(--mt-font-mono);">${est.ttr_years} Yrs</td>
+          <td style="font-family: var(--mt-font-mono);">${est.risk_discount_pct}%</td>
         </tr>
       `;
     }).join('');
@@ -1774,18 +1854,10 @@ function renderAdvanceChart(estimates, currentTerm) {
     advanceChartInstance = null;
   }
 
-  // Create glowing gradient fills
-  const gradTotal = ctx.createLinearGradient(0, 0, 0, 300);
-  gradTotal.addColorStop(0, 'rgba(225, 29, 72, 0.35)');
-  gradTotal.addColorStop(1, 'rgba(225, 29, 72, 0.02)');
-
-  const gradCatalog = ctx.createLinearGradient(0, 0, 0, 300);
-  gradCatalog.addColorStop(0, 'rgba(56, 189, 248, 0.85)');
-  gradCatalog.addColorStop(1, 'rgba(56, 189, 248, 0.4)');
-
-  const gradNew = ctx.createLinearGradient(0, 0, 0, 300);
-  gradNew.addColorStop(0, 'rgba(192, 132, 252, 0.85)');
-  gradNew.addColorStop(1, 'rgba(192, 132, 252, 0.4)');
+  // Create clean Monetunes Brand fills
+  const gradTotal = ctx.createLinearGradient(0, 0, 0, 260);
+  gradTotal.addColorStop(0, 'rgba(216, 26, 55, 0.25)');
+  gradTotal.addColorStop(1, 'rgba(216, 26, 55, 0.01)');
 
   advanceChartInstance = new Chart(ctx, {
     type: 'bar',
@@ -1796,38 +1868,38 @@ function renderAdvanceChart(estimates, currentTerm) {
           type: 'line',
           label: 'Total Advance Offer',
           data: totalData,
-          borderColor: '#f43f5e',
-          borderWidth: 3,
+          borderColor: '#D81A37',
+          borderWidth: 2.5,
           backgroundColor: gradTotal,
           fill: true,
-          tension: 0.35,
-          pointBackgroundColor: '#fff',
-          pointBorderColor: '#e11d48',
-          pointBorderWidth: 3,
-          pointRadius: 6,
-          pointHoverRadius: 9,
+          tension: 0.25,
+          pointBackgroundColor: '#FFFFFF',
+          pointBorderColor: '#D81A37',
+          pointBorderWidth: 2,
+          pointRadius: 5,
+          pointHoverRadius: 7,
           order: 1
         },
         {
           type: 'bar',
           label: 'Catalogue Component',
           data: catalogData,
-          backgroundColor: gradCatalog,
-          borderRadius: 6,
+          backgroundColor: 'rgba(249, 249, 249, 0.85)',
+          borderRadius: 4,
           borderSkipped: false,
-          barPercentage: 0.55,
-          categoryPercentage: 0.6,
+          barPercentage: 0.45,
+          categoryPercentage: 0.55,
           order: 2
         },
         {
           type: 'bar',
           label: 'New Release Component',
           data: newReleaseData,
-          backgroundColor: gradNew,
-          borderRadius: 6,
+          backgroundColor: 'rgba(249, 249, 249, 0.30)',
+          borderRadius: 4,
           borderSkipped: false,
-          barPercentage: 0.55,
-          categoryPercentage: 0.6,
+          barPercentage: 0.45,
+          categoryPercentage: 0.55,
           order: 3
         }
       ]
@@ -1844,13 +1916,13 @@ function renderAdvanceChart(estimates, currentTerm) {
           display: false
         },
         tooltip: {
-          backgroundColor: 'rgba(15, 23, 42, 0.95)',
-          titleColor: '#fff',
-          bodyColor: '#cbd5e1',
-          borderColor: 'rgba(255, 255, 255, 0.15)',
+          backgroundColor: '#141414',
+          titleColor: '#F9F9F9',
+          bodyColor: '#F9F9F9',
+          borderColor: 'rgba(249, 249, 249, 0.15)',
           borderWidth: 1,
-          padding: 12,
-          boxPadding: 6,
+          padding: 10,
+          boxPadding: 4,
           usePointStyle: true,
           callbacks: {
             label: function (context) {
@@ -1863,27 +1935,27 @@ function renderAdvanceChart(estimates, currentTerm) {
       scales: {
         x: {
           grid: {
-            color: 'rgba(255, 255, 255, 0.05)',
+            color: 'rgba(249, 249, 249, 0.06)',
             drawBorder: false
           },
           ticks: {
-            color: '#94a3b8',
+            color: 'rgba(249, 249, 249, 0.50)',
             font: {
-              family: 'Inter',
+              family: 'Inter, sans-serif',
               size: 12,
-              weight: '600'
+              weight: '500'
             }
           }
         },
         y: {
           grid: {
-            color: 'rgba(255, 255, 255, 0.06)',
+            color: 'rgba(249, 249, 249, 0.06)',
             drawBorder: false
           },
           ticks: {
-            color: '#94a3b8',
+            color: 'rgba(249, 249, 249, 0.50)',
             font: {
-              family: 'Inter',
+              family: 'JetBrains Mono, monospace',
               size: 11
             },
             callback: function (value) {
@@ -2010,5 +2082,13 @@ function formatCurrency(num) {
 
 function escapeHtml(str) {
   if (!str) return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  // Single quotes and backticks are escaped too: these strings land inside quoted
+  // HTML attributes, where an unescaped apostrophe silently breaks the markup.
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/`/g, '&#96;');
 }
