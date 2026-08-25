@@ -4,36 +4,52 @@
  */
 
 :root {
-  --bg-app: #090a0d;
-  --bg-sidebar: #101217;
-  --bg-card: rgba(18, 21, 28, 0.88);
-  --bg-card-hover: rgba(26, 31, 42, 0.95);
-  --bg-input: #161922;
-  --border-color: rgba(255, 255, 255, 0.08);
-  --border-focus: #e11d48;
+  /* Monetunes Official Brand Design System Tokens */
+  --mt-black: #0A0A0A;
+  --mt-off-white: #F9F9F9;
+  --mt-red: #D81A37;
+  --mt-red-press: #B0142C;
+  --mt-red-tint: rgba(216, 26, 55, 0.16);
 
-  --primary-purple: #e11d48;
-  --primary-purple-hover: #be123c;
-  --primary-red: #e11d48;
-  --primary-red-hover: #be123c;
-  --primary-gradient: linear-gradient(135deg, #e11d48 0%, #be123c 50%, #9f1239 100%);
+  --bg-app: #0A0A0A;
+  --bg-sidebar: #050505;
+  --bg-card: #141414;
+  --bg-card-hover: #1A1A1A;
+  --bg-input: #2A2A2A;
+  --border-color: rgba(249, 249, 249, 0.12);
+  --border-focus: #D81A37;
+
+  --primary-purple: #D81A37;
+  --primary-purple-hover: #B0142C;
+  --primary-red: #D81A37;
+  --primary-red-hover: #B0142C;
+  --primary-gradient: #D81A37;
+
   --accent-cyan: #06b6d4;
   --accent-emerald: #10b981;
   --accent-amber: #f59e0b;
-  --accent-rose: #e11d48;
+  --accent-rose: #D81A37;
 
-  --text-main: #f8fafc;
-  --text-muted: #94a3b8;
-  --text-dim: #64748b;
+  --text-main: #F9F9F9;
+  --text-muted: rgba(249, 249, 249, 0.72);
+  --text-dim: rgba(249, 249, 249, 0.50);
 
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 18px;
-  --radius-xl: 24px;
-  --shadow-subtle: 0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
-  --shadow-glow: 0 0 25px rgba(225, 29, 72, 0.3);
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  --shadow-subtle: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 20px rgba(216, 26, 55, 0.25);
   --font-main: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-heading: 'Outfit', sans-serif;
+  --font-heading: 'Inter', sans-serif;
+}
+
+.text-gradient, .text-gradient-red, .mt-hl {
+  color: var(--mt-red) !important;
+  background: none !important;
+  -webkit-text-fill-color: initial !important;
+  font-weight: inherit;
 }
 
 * {

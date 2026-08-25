@@ -11,11 +11,11 @@ const state = {
   declaredMonthlyRevenue: 0,
   dealTerms: {
     rightsScope: 'sound_recording',
-    term: 3,
-    customRho: 'auto',
+    term: 5,
+    customRho: 0.50,
     payThroughPct: 0,
-    postRecoupSharePct: 100,
-    singlesContracted: 0,
+    postRecoupSharePct: 90,
+    singlesContracted: 5,
     isGross: false,
     distributorFeePct: 15,
     kMode: 'table'

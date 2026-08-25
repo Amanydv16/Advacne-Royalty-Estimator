@@ -355,6 +355,65 @@
         <section id="stage5" class="stage-section">
           <div class="results-dashboard-container animate-fade-in" id="resultsContainer">
 
+            <!-- Admin Deal Details & Underwriting Control Box (Real-Time Live Adjustments) -->
+            <div class="glass-panel deal-details-panel" style="margin-bottom: 20px; padding: 20px 24px; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius-md);">
+              <div class="panel-header-row" style="margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center;">
+                <h3 class="panel-section-title" style="margin-bottom:0; font-size:1.1rem; color:var(--text-main); font-weight:700;"><i data-lucide="sliders" style="vertical-align:middle; margin-right:8px; color:var(--mt-red);"></i> Admin Deal Details Controls</h3>
+                <div style="font-size:0.78rem; color:#F9F9F9; font-weight:600; background:var(--mt-red-tint); border:1px solid var(--mt-red); padding:4px 10px; border-radius:12px;">
+                  <i data-lucide="zap" style="width:13px;height:13px;vertical-align:middle;margin-right:4px;color:var(--mt-red);"></i> Real-Time Immediate Offer Output
+                </div>
+              </div>
+
+              <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap:18px;">
+                
+                <!-- Term Length (Default: 5 Years) -->
+                <div class="deal-option-block">
+                  <label class="deal-option-label" style="display:block; font-size:0.82rem; color:var(--text-muted); font-weight:600; margin-bottom:8px;">Term Length</label>
+                  <div class="segment-button-group" id="finalTermButtonGroup">
+                    <button class="segment-btn" data-term="1" onclick="selectFinalTerm(1, this)">1 YR</button>
+                    <button class="segment-btn" data-term="2" onclick="selectFinalTerm(2, this)">2 YRS</button>
+                    <button class="segment-btn" data-term="3" onclick="selectFinalTerm(3, this)">3 YRS</button>
+                    <button class="segment-btn active" data-term="5" onclick="selectFinalTerm(5, this)">5 YRS</button>
+                    <button class="segment-btn" data-term="8" onclick="selectFinalTerm(8, this)">8 YRS</button>
+                  </div>
+                </div>
+
+                <!-- Pre-Recoupment Split (Investor / Artist - Default: 50/50) -->
+                <div class="deal-option-block">
+                  <label class="deal-option-label" style="display:block; font-size:0.82rem; color:var(--text-muted); font-weight:600; margin-bottom:8px;">Pre-Recoupment Split (Investor / Artist)</label>
+                  <div class="segment-button-group" id="preRecoupSplitGroup">
+                    <button class="segment-btn" data-rho="auto" onclick="selectPreRecoupSplit('auto', this)">AUTO</button>
+                    <button class="segment-btn" data-rho="0.40" onclick="selectPreRecoupSplit(0.40, this)">40/60</button>
+                    <button class="segment-btn" data-rho="0.45" onclick="selectPreRecoupSplit(0.45, this)">45/55</button>
+                    <button class="segment-btn active" data-rho="0.50" onclick="selectPreRecoupSplit(0.50, this)">50/50</button>
+                    <button class="segment-btn" data-rho="0.55" onclick="selectPreRecoupSplit(0.55, this)">55/45</button>
+                    <button class="segment-btn" data-rho="0.60" onclick="selectPreRecoupSplit(0.60, this)">60/40</button>
+                  </div>
+                </div>
+
+                <!-- Post-Recoupment Share ($e$ - Default: 90/10) -->
+                <div class="deal-option-block">
+                  <div class="slider-header-row" style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                    <label class="deal-option-label" style="font-size:0.82rem; color:var(--text-muted); font-weight:600;">Post-Recoupment Artist Share ($e$)</label>
+                    <span class="slider-badge" id="finalPostRecoupValBadge" style="font-size:0.8rem; color:var(--mt-red); font-weight:700;">90% (90/10)</span>
+                  </div>
+                  <input type="range" id="finalPostRecoupSlider" min="0" max="100" value="90" step="1"
+                    oninput="updateFinalPostRecoupShare(this.value)">
+                </div>
+
+                <!-- Contracted New Singles ($N$ - Default: 5 singles) -->
+                <div class="deal-option-block">
+                  <div class="slider-header-row" style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                    <label class="deal-option-label" style="font-size:0.82rem; color:var(--text-muted); font-weight:600;">Contracted New Singles ($N$)</label>
+                    <span class="slider-badge" id="finalSinglesValBadge" style="font-size:0.8rem; color:var(--mt-red); font-weight:700;">5 singles</span>
+                  </div>
+                  <input type="range" id="finalSinglesSlider" min="0" max="20" value="5" step="1"
+                    oninput="updateFinalContractedSingles(this.value)">
+                </div>
+
+              </div>
+            </div>
+
             <!-- Top Hero Banner: Advance Offers -->
             <div class="hero-valuation-card">
               <div class="hero-left-col">
