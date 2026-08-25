@@ -1082,7 +1082,10 @@ class SpotifyClient:
         Fetches live track catalogues with ISRCs, artwork, release dates, and detects distributor.
         """
         clean_id = (artist_id or "").replace("spotify:artist:", "").strip()
-        
+        extracted_id = self.extract_spotify_id(artist_id) or self.extract_spotify_id(artist_name or "")
+        if extracted_id:
+            clean_id = extracted_id
+
         profile = None
         top_tracks = []
         albums = []
@@ -1105,13 +1108,27 @@ class SpotifyClient:
         image = self.select_best_image_320(profile.get("images")) if profile else ""
         spotify_url = (profile and profile.get("external_urls", {}).get("spotify")) or (f"https://open.spotify.com/artist/{clean_id}" if clean_id else "")
 
-        # Try to resolve profile photo via oEmbed or Wikidata if missing
-        if not image and clean_id and self.SPOTIFY_ID_RE.match(clean_id):
-            oem = self.fetch_oembed_profile(clean_id)
-            if oem:
-                image = oem.get("imageUrl", "")
-                if not name or name == "Unknown Artist":
-                    name = oem.get("name", name)
+        # Try to resolve profile photo via oEmbed or identity resolution if missing
+        if not image:
+            if clean_id and self.SPOTIFY_ID_RE.match(clean_id):
+                oem = self.fetch_oembed_profile(clean_id)
+                if oem and oem.get("imageUrl"):
+                    image = oem["imageUrl"]
+                    if not name or name == "Unknown Artist":
+                        name = oem.get("name", name)
+                    if not spotify_url:
+                        spotify_url = f"https://open.spotify.com/artist/{clean_id}"
+
+        if not image and name and name != "Unknown Artist":
+            res_identity = self.resolve_spotify_identity(name)
+            if res_identity:
+                if res_identity.get("id") and not clean_id:
+                    clean_id = res_identity["id"]
+                    spotify_url = f"https://open.spotify.com/artist/{clean_id}"
+                if res_identity.get("imageUrl"):
+                    image = res_identity["imageUrl"]
+                if res_identity.get("name") and name == "Unknown Artist":
+                    name = res_identity["name"]
 
         # Extract and format top tracks & paginated catalogue
         formatted_tracks = []

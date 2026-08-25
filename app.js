@@ -228,8 +228,8 @@ async function fetchArtistsClientSide(query) {
   const encoded = encodeURIComponent(qStr);
   const candidates = [];
 
-  // Case 0: Direct Spotify URL or URI pasted in search bar (e.g. open.spotify.com/artist/6DARBhWbfcS9E4yJzcliqQ or spotify:artist:6DARBh...)
-  const spotifyMatch = qStr.match(/(?:artist\/|spotify:artist:)([A-Za-z0-9]{22})/i);
+  // Case 0: Direct Spotify URL, URI, or raw 22-char ID pasted in search bar
+  const spotifyMatch = qStr.match(/(?:artist\/|spotify:artist:|^)([A-Za-z0-9]{22})$/i) || qStr.match(/(?:artist\/|spotify:artist:)([A-Za-z0-9]{22})/i);
   if (spotifyMatch) {
     const sId = spotifyMatch[1];
     try {
