@@ -67,8 +67,23 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 });
 
+function handleStage1Proceed() {
+  const inputVal = (document.getElementById('artistSearchInput')?.value || '').trim();
+  if (!state.selectedArtist && inputVal) {
+    selectArtist(inputVal, 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces', `spotify:artist:${Math.abs(hashString(inputVal))}`);
+  } else if (!state.selectedArtist) {
+    selectArtist('Islem-23', 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=faces', 'spotify:artist:4m5hXq7Z8W3Z');
+  }
+  goToStage(3);
+}
+
 // Stage Navigation
 function goToStage(stageNum) {
+  // If Stage 2 requested, redirect to Stage 3 (bypassing manual revenue entry)
+  if (stageNum === 2) {
+    stageNum = 3;
+  }
+
   if (stageNum > 1 && !state.selectedArtist) {
     const inputVal = (document.getElementById('artistSearchInput')?.value || '').trim();
     if (inputVal) {
@@ -79,7 +94,6 @@ function goToStage(stageNum) {
   }
 
   if (stageNum === 5 && !state.hasUploadedValidData && !state.sampleDatasetLoaded) {
-    // If user clicks Step 5 directly, run valuation on the primary catalog
     loadSampleDataset('islem23');
     return;
   }
@@ -94,7 +108,7 @@ function goToStage(stageNum) {
   // Update wizard top indicator
   document.querySelectorAll('.wizard-step').forEach(step => step.classList.remove('active'));
   if (stageNum === 1) document.getElementById('stepIndicator1')?.classList.add('active');
-  else if (stageNum === 2 || stageNum === 3) document.getElementById('stepIndicator2')?.classList.add('active');
+  else if (stageNum === 3) document.getElementById('stepIndicator2')?.classList.add('active');
   else if (stageNum === 4) document.getElementById('stepIndicator3')?.classList.add('active');
   else if (stageNum === 5) document.getElementById('stepIndicator4')?.classList.add('active');
 
