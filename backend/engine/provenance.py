@@ -162,6 +162,26 @@ FLAG_DESCRIPTIONS: Dict[str, Dict[str, str]] = {
         "severity": "warning",
         "title": "High Anchor Divergence (> 25%)",
         "description": "The trailing median R0 and single-month R0_last diverge by more than 25%."
+    },
+    "MARGIN_IS_UPPER_BOUND": {
+        "severity": "advisory",
+        "title": "Margin Assumes Flat Baseline (Upper Bound)",
+        "description": "Expected return calculations assume catalog revenue holds flat at R0 throughout recoupment. Real decay lowers realized margin."
+    },
+    "RECOUP_OUTSIDE_TERM": {
+        "severity": "warning",
+        "title": "Recoupment Exceeds Contract Term",
+        "description": "Expected recoupment duration m* exceeds the contracted term length (12T months); the balance cannot clear inside the deal."
+    },
+    "LOW_DECAY_COVERAGE": {
+        "severity": "warning",
+        "title": "Low Decay Measurement Coverage (< 60%)",
+        "description": "The share of catalog revenue covered by measurable active song decay slopes is below 60%."
+    },
+    "INVALID_RHO": {
+        "severity": "blocking",
+        "title": "Invalid Recoupment Split",
+        "description": "Pre-recoupment split must be one of the supported menu values (0.40, 0.45, 0.50, 0.55, 0.60)."
     }
 }
 
@@ -175,7 +195,7 @@ def build_provenance_and_flags(
     artist_metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
-    Constructs the full Provenance Block and compiles all unique active system flags.
+    Constructs the full Provenance Block and compiles all unique active system flags (Engine V3).
     """
     all_flag_keys = ["PARAM_WEIGHTS_UNCALIBRATED"]
     all_flag_keys.extend(ingestion_res.flags)
@@ -223,12 +243,12 @@ def build_provenance_and_flags(
             "r0_last_single_month": round(catalog_res.r0_last, 2),
             "r0_window_months": catalog_res.r0_window_months,
             "term_years": catalog_res.term,
-            "pay_through_p": round(catalog_res.pay_through, 4),
+            "rho": round(catalog_res.rho_t, 4),
             "post_recoup_share_e": round(catalog_res.post_recoup_share, 4),
-            "derived_rho_t": round(catalog_res.rho_t, 4),
             "k_base_t": round(catalog_res.k_base, 3),
             "k_t_active": round(catalog_res.k_t, 3),
             "early_recoup_multiplier_e": round(catalog_res.e_multiplier, 4),
+            "months_to_recoup": round(catalog_res.months_to_recoup, 2),
             "ttr_years": round(catalog_res.ttr_years, 3),
             "gini_raw": round(catalog_res.gini_raw, 4) if catalog_res.gini_raw is not None else None,
             "gini_star": round(catalog_res.gini_star, 4) if catalog_res.gini_star is not None else None,
@@ -240,6 +260,14 @@ def build_provenance_and_flags(
             "risk_discount": round(catalog_res.risk_discount, 4),
             "a_last_sensitivity": round(catalog_res.a_last_sensitivity, 2),
             "a_catalog_final": round(a_catalog, 2)
+        },
+        "expected_margin": {
+            "margin_recoup": round(catalog_res.margin_recoup, 2),
+            "margin_tail": round(catalog_res.margin_tail, 2),
+            "expected_gross": round(catalog_res.expected_gross, 2),
+            "expected_return": round(catalog_res.expected_return, 4),
+            "expected_return_pct": round(catalog_res.expected_return * 100, 1),
+            "months_to_recoup": round(catalog_res.months_to_recoup, 1)
         },
         "new_release_valuation": {
             "n_contracted": new_release_res.n_contracted if new_release_res else 0,

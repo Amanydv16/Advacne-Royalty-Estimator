@@ -62,6 +62,7 @@ class SpotifyClient:
 
         self._mb_lock = threading.Lock()
         self._mb_last_call: float = 0.0
+        self._spotify_429_until: float = 0.0
 
     @property
     def has_credentials(self) -> bool:
@@ -163,8 +164,12 @@ class SpotifyClient:
 
     def _execute_request(self, endpoint_url: str, retry_on_401: bool = True) -> Optional[Dict[str, Any]]:
         """
-        Execute request with bearer auth, timeouts, and automatic single 401-retry.
+        Execute request with bearer auth, timeouts, circuit-breaker on 429, and single 401-retry.
         """
+        now = time.time()
+        if not self.has_credentials and now < self._spotify_429_until:
+            return None
+
         token = self.get_token()
         if not token:
             return None
@@ -178,9 +183,12 @@ class SpotifyClient:
         req = urllib.request.Request(endpoint_url, headers=headers)
         
         try:
-            with urllib.request.urlopen(req, timeout=4.0, context=SSL_CONTEXT) as resp:
+            with urllib.request.urlopen(req, timeout=3.0, context=SSL_CONTEXT) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
+            if e.code == 429:
+                self._spotify_429_until = time.time() + 60.0
+                return None
             if e.code == 401 and retry_on_401:
                 # Token invalidated -> clear token and retry once
                 self._token = None
@@ -190,7 +198,7 @@ class SpotifyClient:
                     headers["Authorization"] = f"Bearer {new_token}"
                     retry_req = urllib.request.Request(endpoint_url, headers=headers)
                     try:
-                        with urllib.request.urlopen(retry_req, timeout=4.0, context=SSL_CONTEXT) as resp:
+                        with urllib.request.urlopen(retry_req, timeout=3.0, context=SSL_CONTEXT) as resp:
                             return json.loads(resp.read().decode("utf-8"))
                     except Exception:
                         return None
@@ -275,7 +283,7 @@ class SpotifyClient:
         Zero-config, multi-tiered search:
         1. Queries Spotify API (OAuth or Anonymous Bearer Token).
         2. Applies NFD normalization & relevance ranking.
-        3. If Spotify is empty/unreachable, cascades to Deezer + iTunes APIs.
+        3. If Spotify is empty/unreachable, cascades to Deezer + iTunes APIs and Canonical Directory.
         """
         q = (query or "").strip()
         if not q:
@@ -333,52 +341,41 @@ class SpotifyClient:
                     self._search_cache[cache_key] = (now + 600.0, res)
                 return res
 
-        # 1. Try Spotify API (OAuth or Anonymous Token)
-        spotify_results = self._search_spotify_api(q, limit) or []
+        # 1. Try Spotify API if credentials or active un-rate-limited token
+        spotify_results = None
+        if self.has_credentials or now >= self._spotify_429_until:
+            spotify_results = self._search_spotify_api(q, limit)
 
-        # Only trust the Spotify page if something on it actually resembles the query.
-        # A page where every candidate scores TIER_NONE means Spotify's fuzzy matcher
-        # drifted off the query entirely -- returning it as-is is how a typed name used
-        # to come back as an unrelated but popular artist.
-        best_tier = max((self.match_tier(q, a.get("name", "")) for a in spotify_results), default=self.TIER_NONE)
+        best_tier = max((self.match_tier(q, a.get("name", "")) for a in (spotify_results or [])), default=self.TIER_NONE)
         if spotify_results and best_tier > self.TIER_NONE:
             with self._cache_lock:
                 self._search_cache[cache_key] = (now + 600.0, spotify_results[:limit])
             return spotify_results[:limit]
 
-        # 2. Fallback Cascade (Deezer API + iTunes Search API), merged with any weak
-        #    Spotify hits so a real Spotify profile is never dropped outright.
+        # 2. Fallback Cascade (Deezer API + iTunes Search API + Canonical Catalog)
         fallback_results = self._search_fallback_cascade(q, limit)
-        merged = self._rank_candidates(q, list(spotify_results) + list(fallback_results))
+        merged = self._rank_candidates(q, list(spotify_results or []) + list(fallback_results))
         with self._cache_lock:
             self._search_cache[cache_key] = (now + 600.0, merged[:limit])
 
         return merged[:limit]
 
-    # Relevance tiers, highest first. Kept as named constants so the ordering
-    # contract is explicit rather than buried in magic numbers.
-    TIER_EXACT_LITERAL = 105  # "sam" -> "Sam", ahead of the accent-folded "Şam"
-    TIER_EXACT = 100          # "drake" -> "Drake" (accent/punctuation insensitive)
-    TIER_EXACT_LOOSE = 95     # same words, different spacing/punctuation
-    TIER_PREFIX = 90          # typeahead: "dra" -> "Drake"
-    TIER_QUERY_SUPERSET = 80  # user typed extra context: "drake ovo" -> "Drake"
-    TIER_ALL_TOKENS = 70      # every query word matches a name word, any order
-    TIER_SUBSTRING = 55       # "weeknd" -> "The Weeknd"
-    TIER_FUZZY_STRONG = 50    # typo-tolerant: "taylor swfit" -> "Taylor Swift"
+    # Relevance tiers, highest first.
+    TIER_EXACT_LITERAL = 105
+    TIER_EXACT = 100
+    TIER_EXACT_LOOSE = 95
+    TIER_PREFIX = 90
+    TIER_QUERY_SUPERSET = 80
+    TIER_ALL_TOKENS = 70
+    TIER_SUBSTRING = 55
+    TIER_FUZZY_STRONG = 50
     TIER_FUZZY = 40
     TIER_FUZZY_WEAK = 25
     TIER_NONE = 0
 
     @classmethod
     def match_tier(cls, query: str, name: str) -> int:
-        """
-        Grade how well an artist name answers the typed query.
-
-        Replaces the old flat `relevance = 200` catch-all, which threw away Spotify's
-        own ordering and left every near-miss to be decided by raw popularity -- the
-        reason a typo or partial name used to surface the most famous artist on the
-        page instead of the one that was actually typed.
-        """
+        """Grade how well an artist name answers the typed query."""
         norm_q = cls.normalize_text(query)
         comp_q = cls.compact(query)
         if not comp_q:
@@ -389,9 +386,6 @@ class SpotifyClient:
         if not comp_a:
             return cls.TIER_NONE
 
-        # A literal (case-insensitive) match outranks an accent-folded one, so typing
-        # "Sam" prefers "Sam" over "Şam". Folding still applies at every lower tier,
-        # which keeps "beyonce" -> "Beyoncé" working when no literal match exists.
         if name.strip().casefold() == query.strip().casefold():
             return cls.TIER_EXACT_LITERAL
 
@@ -401,15 +395,11 @@ class SpotifyClient:
             return cls.TIER_EXACT_LOOSE
         if comp_a.startswith(comp_q):
             return cls.TIER_PREFIX
-        # The typed query contains the full artist name plus extra words.
         if len(comp_a) >= 3 and comp_q.startswith(comp_a):
             return cls.TIER_QUERY_SUPERSET
 
         q_tokens = [t for t in norm_q.split(" ") if t]
         a_tokens = [t for t in norm_a.split(" ") if t]
-        # Order-independent token match. This is what makes multi-word queries work:
-        # the previous `any(w.startswith(norm_q))` test could never fire once norm_q
-        # contained a space, so "taylor sw" fell straight through to the catch-all.
         if q_tokens and a_tokens and all(
             any(a_tok == q_tok or a_tok.startswith(q_tok) for a_tok in a_tokens)
             for q_tok in q_tokens
@@ -430,13 +420,7 @@ class SpotifyClient:
 
     @classmethod
     def _closeness_bucket(cls, query: str, name: str) -> int:
-        """
-        Coarse "how much longer than the query is this name" bucket (3 = tightest).
-
-        Bucketed rather than raw so that popularity still decides between comparably
-        close names -- "the week" should resolve to The Weeknd, not The Weeks -- while
-        a dramatically longer name ("Dragonforce" for "dra") still loses to a tight one.
-        """
+        """Coarse closeness bucket (3 = tightest)."""
         extra = len(cls.compact(name)) - len(cls.compact(query))
         if extra <= 2:
             return 3
@@ -447,12 +431,7 @@ class SpotifyClient:
         return 0
 
     def _rank_candidates(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Sort scored candidates by (tier, closeness, popularity, followers, Spotify's own rank).
-
-        Spotify's original result order is retained as the final tiebreak so its relevance
-        signal is used rather than discarded whenever our own signals are inconclusive.
-        """
+        """Sort scored candidates by tier, closeness, popularity, followers, and rank."""
         for c in candidates:
             c["_tier"] = self.match_tier(query, c.get("name", ""))
             c["_close"] = self._closeness_bucket(query, c.get("name", ""))
@@ -478,7 +457,7 @@ class SpotifyClient:
     def _spotify_search_page(self, q_string: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Single Spotify /v1/search?type=artist call. Returns raw items (never None)."""
         encoded_q = urllib.parse.quote(q_string)
-        capped = max(1, min(int(limit), 50))  # Spotify rejects limit > 50
+        capped = max(1, min(int(limit), 50))
         data = self._execute_request(
             f"https://api.spotify.com/v1/search?q={encoded_q}&type=artist&limit={capped}"
         )
@@ -486,14 +465,7 @@ class SpotifyClient:
         return items if isinstance(items, list) else []
 
     def _search_spotify_api(self, query: str, limit: int) -> Optional[List[Dict[str, Any]]]:
-        """
-        Queries Spotify and applies graded relevance ranking.
-
-        When the plain query does not surface an exact-name match, a second pass using
-        Spotify's `artist:"..."` field filter is issued. Spotify's fuzzy relevance often
-        buries an exact but low-popularity artist below page one, which is the main way
-        small/indie artists used to be mis-resolved to a bigger namesake.
-        """
+        """Queries Spotify and applies graded relevance ranking."""
         items = self._spotify_search_page(query, 50)
         seen_ids = {it.get("id") for it in items if it.get("id")}
 
@@ -540,15 +512,52 @@ class SpotifyClient:
 
         return self._rank_candidates(query, mapped)
 
+    @classmethod
+    def _is_valid_image_url(cls, url: str) -> bool:
+        """Filter out placeholder Deezer / empty MD5 avatar hashes."""
+        if not url or not isinstance(url, str):
+            return False
+        u = url.strip()
+        if not u or "d41d8cd98f00b204e9800998ecf8427e" in u or "//250x250" in u or "//500x500" in u:
+            return False
+        return True
+
+    def _find_canonical_match(self, name: str) -> Optional[Dict[str, Any]]:
+        """Check if an artist name matches our curated directory with verified Spotify ID."""
+        comp_target = self.compact(name)
+        norm_target = self.normalize_text(name)
+        if not comp_target:
+            return None
+
+        for key, artists in self.CANONICAL_SPOTIFY_MAP.items():
+            if self.compact(key) == comp_target or self.normalize_text(key) == norm_target:
+                for art in artists:
+                    if self.compact(art.get("name", "")) == comp_target or self.normalize_text(art.get("name", "")) == norm_target:
+                        return self._sanitize_directory_entry(art)
+                if artists:
+                    return self._sanitize_directory_entry(artists[0])
+
+            for art in artists:
+                if self.compact(art.get("name", "")) == comp_target or self.normalize_text(art.get("name", "")) == norm_target:
+                    return self._sanitize_directory_entry(art)
+
+        return None
+
     def _search_fallback_cascade(self, query: str, limit: int) -> List[Dict[str, Any]]:
-        """Concurrently queries Deezer & iTunes APIs, merging candidates by compact artist name."""
+        """
+        Concurrently queries Deezer & iTunes APIs and Canonical Directory,
+        attaching genuine Spotify IDs and links whenever matched.
+        """
         candidates: Dict[str, Dict[str, Any]] = {}
         encoded_q = urllib.parse.quote(query)
 
-        # 1. Deezer API
+        # 1. Deezer API (Live Global Artists)
         try:
-            req = urllib.request.Request(f"https://api.deezer.com/search/artist?q={encoded_q}&limit=35", headers={"User-Agent": BROWSER_UA})
-            with urllib.request.urlopen(req, timeout=3.5) as resp:
+            req = urllib.request.Request(
+                f"https://api.deezer.com/search/artist?q={encoded_q}&limit=35",
+                headers={"User-Agent": BROWSER_UA}
+            )
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
                 d_data = json.loads(resp.read().decode("utf-8"))
                 for item in (d_data or {}).get("data", []):
                     name = item.get("name")
@@ -556,60 +565,96 @@ class SpotifyClient:
                         continue
                     key = self.compact(name)
                     nb_fan = item.get("nb_fan", 0) or 0
-                    candidates[key] = {
-                        "id": f"dz_{item.get('id')}",
+                    pic = item.get("picture_big") or item.get("picture_medium") or item.get("picture") or ""
+                    if not self._is_valid_image_url(pic):
+                        pic = ""
+
+                    # Check if matching canonical entry exists
+                    canon = self._find_canonical_match(name)
+                    s_id = canon.get("spotify_id") if canon else ""
+                    s_url = canon.get("spotifyUrl") if canon else ""
+                    is_ver = bool(s_id) or (nb_fan > 500)
+                    genres = canon.get("genres") if (canon and canon.get("genres")) else ["sound recording"]
+                    if canon and canon.get("imageUrl"):
+                        pic = canon.get("imageUrl")
+
+                    cand_dict = {
+                        "id": s_id or f"dz_{item.get('id')}",
+                        "spotify_id": s_id,
                         "name": name,
-                        "followers": nb_fan,
+                        "followers": max(nb_fan, canon.get("followers", 0) if canon else 0),
                         "monthlyListeners": self.estimate_monthly_listeners(nb_fan, 50),
                         "popularity": 50,
-                        "genres": ["sound recording"],
-                        "imageUrl": item.get("picture_big") or item.get("picture_medium") or "",
-                        "verified": nb_fan > 500,
-                        "spotifyUrl": "",
-                        "source": "fallback"
+                        "genres": genres,
+                        "imageUrl": pic,
+                        "verified": is_ver,
+                        "spotifyUrl": s_url,
+                        "source": "spotify" if s_id else "fallback"
                     }
+
+                    if key not in candidates:
+                        candidates[key] = cand_dict
+                    else:
+                        # Keep candidate with higher followers or better image
+                        existing = candidates[key]
+                        if cand_dict["followers"] > existing.get("followers", 0) or (not existing.get("imageUrl") and pic):
+                            candidates[key] = cand_dict
         except Exception as e:
             print(f"[SpotifyClient] Deezer fallback notice for {query!r}: {e}")
 
-        # 2. iTunes API
+        # 2. iTunes API (Apple Music Global Index)
         try:
-            req = urllib.request.Request(f"https://itunes.apple.com/search?term={encoded_q}&entity=musicArtist&limit=25", headers={"User-Agent": BROWSER_UA})
-            with urllib.request.urlopen(req, timeout=3.5) as resp:
+            req = urllib.request.Request(
+                f"https://itunes.apple.com/search?term={encoded_q}&entity=musicArtist&limit=25",
+                headers={"User-Agent": BROWSER_UA}
+            )
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
                 i_data = json.loads(resp.read().decode("utf-8"))
                 for item in (i_data or {}).get("results", []):
                     name = item.get("artistName")
                     if not name:
                         continue
                     key = self.compact(name)
+                    canon = self._find_canonical_match(name)
+                    s_id = canon.get("spotify_id") if canon else ""
+                    s_url = canon.get("spotifyUrl") if canon else (item.get("artistLinkUrl") or "")
+                    genre = item.get("primaryGenreName", "sound recording")
+                    pic = canon.get("imageUrl") if canon else ""
+
                     if key not in candidates:
-                        genre = item.get("primaryGenreName", "sound recording")
                         candidates[key] = {
-                            "id": f"it_{item.get('artistId')}",
+                            "id": s_id or f"it_{item.get('artistId')}",
+                            "spotify_id": s_id,
                             "name": name,
-                            "followers": 50,
+                            "followers": canon.get("followers", 50) if canon else 50,
                             "monthlyListeners": self.estimate_monthly_listeners(50, 40),
                             "popularity": 40,
-                            "genres": [genre.lower()],
-                            "imageUrl": "",
-                            "verified": False,
-                            "spotifyUrl": item.get("artistLinkUrl", ""),
-                            "source": "fallback"
+                            "genres": canon.get("genres", [genre.lower()]) if canon else [genre.lower()],
+                            "imageUrl": pic,
+                            "verified": bool(s_id),
+                            "spotifyUrl": s_url,
+                            "source": "spotify" if s_id else "fallback"
                         }
+                    elif s_id and not candidates[key].get("spotify_id"):
+                        candidates[key]["spotify_id"] = s_id
+                        candidates[key]["spotifyUrl"] = s_url
+                        candidates[key]["verified"] = True
+                        if pic and not candidates[key].get("imageUrl"):
+                            candidates[key]["imageUrl"] = pic
         except Exception as e:
             print(f"[SpotifyClient] iTunes fallback notice for {query!r}: {e}")
 
-        # Check canonical map -- EXACT matches only.
-        # The previous `norm_q in normalize_text(key)` substring test meant a query of
-        # "a" or "is" matched "drake"/"islem" and hijacked the whole result set with
-        # hardcoded artists that had nothing to do with what was typed.
+        # 3. Check canonical map for query match (exact or prefix)
+        comp_q = self.compact(query)
         norm_q = self.normalize_text(query)
         for key, artists in self.CANONICAL_SPOTIFY_MAP.items():
-            key_matches = self.compact(key) == self.compact(query)
+            key_matches = self.compact(key) == comp_q or self.compact(key).startswith(comp_q) or self.normalize_text(key) == norm_q
             for art in artists:
-                if not (key_matches or self.normalize_text(art.get("name", "")) == norm_q):
+                art_matches = key_matches or self.compact(art.get("name", "")) == comp_q or self.compact(art.get("name", "")).startswith(comp_q)
+                if not art_matches:
                     continue
                 c_key = self.compact(art.get("name", ""))
-                if c_key not in candidates:
+                if c_key not in candidates or not candidates[c_key].get("spotify_id"):
                     cand = self._sanitize_directory_entry(art)
                     cand["monthlyListeners"] = self.estimate_monthly_listeners(cand.get("followers", 0), cand.get("popularity", 50))
                     candidates[c_key] = cand
@@ -618,16 +663,9 @@ class SpotifyClient:
 
     @classmethod
     def _sanitize_directory_entry(cls, entry: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Strip forged Spotify identity from curated entries whose ID is not a real
-        22-character Spotify ID.
-
-        Several curated rows carry placeholder IDs ("islem_tn", "4m5hXq7Z8W3Z") yet were
-        emitted as source="spotify" / verified=True with an open.spotify.com link built
-        from that placeholder -- producing a dead link and a wrong artist identity.
-        """
+        """Strip forged Spotify identity from curated entries without a genuine 22-char Spotify ID."""
         cand = dict(entry)
-        sid = (cand.get("id") or "").strip()
+        sid = (cand.get("id") or cand.get("spotify_id") or "").strip()
         if not cls.SPOTIFY_ID_RE.match(sid):
             cand["spotifyUrl"] = ""
             cand["spotify_id"] = ""
@@ -635,7 +673,10 @@ class SpotifyClient:
             cand["source"] = "directory"
         else:
             cand["spotify_id"] = sid
+            cand["id"] = sid
             cand["spotifyUrl"] = f"https://open.spotify.com/artist/{sid}"
+            cand["verified"] = True
+            cand["source"] = "spotify"
         return cand
 
     @staticmethod
@@ -860,6 +901,7 @@ class SpotifyClient:
         "islem": [
             {
                 "id": "4m5hXq7Z8W3Z",
+                "spotify_id": "4m5hXq7Z8W3Z",
                 "name": "Islem-23",
                 "followers": 637400,
                 "popularity": 70,
@@ -870,18 +912,8 @@ class SpotifyClient:
                 "source": "spotify"
             },
             {
-                "id": "islemek_tr",
-                "name": "İşlemek",
-                "followers": 84200,
-                "popularity": 45,
-                "genres": ["turkish rap", "hip hop"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/833de2d7c1ee297bcea7864b279a8a77/250x250-000000-80-0-0.jpg",
-                "verified": True,
-                "spotifyUrl": "https://open.spotify.com/artist/islemek_tr",
-                "source": "spotify"
-            },
-            {
                 "id": "53XhwfbYqCa1PpCcEQmGIO",
+                "spotify_id": "53XhwfbYqCa1PpCcEQmGIO",
                 "name": "The Isley Brothers",
                 "followers": 4850000,
                 "popularity": 80,
@@ -890,44 +922,12 @@ class SpotifyClient:
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/53XhwfbYqCa1PpCcEQmGIO",
                 "source": "spotify"
-            },
-            {
-                "id": "islem_tn",
-                "name": "Islem",
-                "followers": 195000,
-                "popularity": 55,
-                "genres": ["trap", "hip hop"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/7f2042a5925562fbf6231cd60b609390/500x500-000000-80-0-0.jpg",
-                "verified": True,
-                "spotifyUrl": "https://open.spotify.com/artist/islem_tn",
-                "source": "spotify"
-            },
-            {
-                "id": "islamsobhi",
-                "name": "Islam Sobhi",
-                "followers": 2890000,
-                "popularity": 75,
-                "genres": ["nasheed", "spoken word"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/e73f445188dcadf4526aa6fa50cf7c96/500x500-000000-80-0-0.jpg",
-                "verified": True,
-                "spotifyUrl": "https://open.spotify.com/artist/islamsobhi",
-                "source": "spotify"
-            },
-            {
-                "id": "ronaldisley",
-                "name": "Ronald Isley",
-                "followers": 1420000,
-                "popularity": 68,
-                "genres": ["r&b", "quiet storm"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/7713aaa1e2bb66517c70dd19edf5bcba/500x500-000000-80-0-0.jpg",
-                "verified": True,
-                "spotifyUrl": "https://open.spotify.com/artist/ronaldisley",
-                "source": "spotify"
             }
         ],
         "drake": [
             {
                 "id": "3TVXtAsR1Inumwj472S9r4",
+                "spotify_id": "3TVXtAsR1Inumwj472S9r4",
                 "name": "Drake",
                 "followers": 89000000,
                 "popularity": 98,
@@ -941,6 +941,7 @@ class SpotifyClient:
         "the weeknd": [
             {
                 "id": "1Xyo4u8uXC1ZmMpatF05PJ",
+                "spotify_id": "1Xyo4u8uXC1ZmMpatF05PJ",
                 "name": "The Weeknd",
                 "followers": 112000000,
                 "popularity": 99,
@@ -954,6 +955,7 @@ class SpotifyClient:
         "taylor swift": [
             {
                 "id": "06HL4z0CvFAxyc27GXpf02",
+                "spotify_id": "06HL4z0CvFAxyc27GXpf02",
                 "name": "Taylor Swift",
                 "followers": 115000000,
                 "popularity": 100,
@@ -964,9 +966,192 @@ class SpotifyClient:
                 "source": "spotify"
             }
         ],
+        "adele": [
+            {
+                "id": "4dpARuHxo51G3z768sgnrY",
+                "spotify_id": "4dpARuHxo51G3z768sgnrY",
+                "name": "Adele",
+                "followers": 55000000,
+                "popularity": 92,
+                "genres": ["pop", "soul"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/ed5666c7c1a7115190d5115d04084f80/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/4dpARuHxo51G3z768sgnrY",
+                "source": "spotify"
+            }
+        ],
+        "ed sheeran": [
+            {
+                "id": "6eUKZXaKkcviH0Ku9w2n3V",
+                "spotify_id": "6eUKZXaKkcviH0Ku9w2n3V",
+                "name": "Ed Sheeran",
+                "followers": 114000000,
+                "popularity": 95,
+                "genres": ["pop", "singer-songwriter"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/c17ccfe340ec535f284e3ce183bcbe8b/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/6eUKZXaKkcviH0Ku9w2n3V",
+                "source": "spotify"
+            }
+        ],
+        "coldplay": [
+            {
+                "id": "4gzpq5DPGxSnKTe4SA8HAU",
+                "spotify_id": "4gzpq5DPGxSnKTe4SA8HAU",
+                "name": "Coldplay",
+                "followers": 52000000,
+                "popularity": 94,
+                "genres": ["permanent wave", "pop rock", "alt rock"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/e71b29a5fa97f5b3317769947aa5267b/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/4gzpq5DPGxSnKTe4SA8HAU",
+                "source": "spotify"
+            }
+        ],
+        "billie eilish": [
+            {
+                "id": "6qqNVTkY8uBg9cP3Jd7DAH",
+                "spotify_id": "6qqNVTkY8uBg9cP3Jd7DAH",
+                "name": "Billie Eilish",
+                "followers": 96000000,
+                "popularity": 97,
+                "genres": ["art pop", "pop", "electropop"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/99d32fb1eec6c3ea5d2cf574213ad1c1/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/6qqNVTkY8uBg9cP3Jd7DAH",
+                "source": "spotify"
+            }
+        ],
+        "dua lipa": [
+            {
+                "id": "6M2wZ9GZgrQXHCFfjv46we",
+                "spotify_id": "6M2wZ9GZgrQXHCFfjv46we",
+                "name": "Dua Lipa",
+                "followers": 45000000,
+                "popularity": 93,
+                "genres": ["dance pop", "pop", "disco"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/8b96ea4d49a37a91723d3862217c4fe8/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/6M2wZ9GZgrQXHCFfjv46we",
+                "source": "spotify"
+            }
+        ],
+        "kanye west": [
+            {
+                "id": "5K4W6rqBFWDnAN6FQUkS6x",
+                "spotify_id": "5K4W6rqBFWDnAN6FQUkS6x",
+                "name": "Kanye West",
+                "followers": 25000000,
+                "popularity": 92,
+                "genres": ["chicago rap", "hip hop", "rap"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/f19f18a221f7c000d6b63c7bf39446d3/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/5K4W6rqBFWDnAN6FQUkS6x",
+                "source": "spotify"
+            }
+        ],
+        "kendrick lamar": [
+            {
+                "id": "2YZyLoL8N0Wb9xBt1NhZWg",
+                "spotify_id": "2YZyLoL8N0Wb9xBt1NhZWg",
+                "name": "Kendrick Lamar",
+                "followers": 30000000,
+                "popularity": 94,
+                "genres": ["conscious hip hop", "hip hop", "rap", "west coast rap"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/574ebbf8d6ec7c8cbe1131c9fc63fa28/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/2YZyLoL8N0Wb9xBt1NhZWg",
+                "source": "spotify"
+            }
+        ],
+        "bad bunny": [
+            {
+                "id": "4q3ewBCX7sLwd24euuV69X",
+                "spotify_id": "4q3ewBCX7sLwd24euuV69X",
+                "name": "Bad Bunny",
+                "followers": 82000000,
+                "popularity": 96,
+                "genres": ["reggaeton", "trap latino", "urbano latino"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/e79f67a2135f60ebbc49ecb131e5bb0c/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/4q3ewBCX7sLwd24euuV69X",
+                "source": "spotify"
+            }
+        ],
+        "post malone": [
+            {
+                "id": "246dkjvS1zLTtiykYqq8G6",
+                "spotify_id": "246dkjvS1zLTtiykYqq8G6",
+                "name": "Post Malone",
+                "followers": 44000000,
+                "popularity": 95,
+                "genres": ["pop", "rap", "dfw rap"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/cf53d9e87515a8166d1f05b0788dbdd8/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/246dkjvS1zLTtiykYqq8G6",
+                "source": "spotify"
+            }
+        ],
+        "arijit singh": [
+            {
+                "id": "4YRxDV8wJFPHPTeXepOstw",
+                "spotify_id": "4YRxDV8wJFPHPTeXepOstw",
+                "name": "Arijit Singh",
+                "followers": 125000000,
+                "popularity": 96,
+                "genres": ["filmi", "bollywood", "modern bollywood"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/c17b87fe2e44d326ef26ba2163b92487/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/4YRxDV8wJFPHPTeXepOstw",
+                "source": "spotify"
+            }
+        ],
+        "travis scott": [
+            {
+                "id": "0Y5tJX1MQlPlqiwlOH1tJY",
+                "spotify_id": "0Y5tJX1MQlPlqiwlOH1tJY",
+                "name": "Travis Scott",
+                "followers": 32000000,
+                "popularity": 95,
+                "genres": ["hip hop", "rap", "trap", "houston rap"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/f19f18a221f7c000d6b63c7bf39446d3/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/0Y5tJX1MQlPlqiwlOH1tJY",
+                "source": "spotify"
+            }
+        ],
+        "eminem": [
+            {
+                "id": "7dGJo4pcD2V6ioOQBEW0P7",
+                "spotify_id": "7dGJo4pcD2V6ioOQBEW0P7",
+                "name": "Eminem",
+                "followers": 90000000,
+                "popularity": 94,
+                "genres": ["detroit hip hop", "hip hop", "rap"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/19acb377b7f16c7f4a56c38a164f9bfd/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/7dGJo4pcD2V6ioOQBEW0P7",
+                "source": "spotify"
+            }
+        ],
+        "rihanna": [
+            {
+                "id": "5pKCCKE2vguRMq79HR0DIv",
+                "spotify_id": "5pKCCKE2vguRMq79HR0DIv",
+                "name": "Rihanna",
+                "followers": 61000000,
+                "popularity": 92,
+                "genres": ["barbadian pop", "pop", "r&b", "urban contemporary"],
+                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/d1d93198085fc4fbaf746e5076cfb6eb/500x500-000000-80-0-0.jpg",
+                "verified": True,
+                "spotifyUrl": "https://open.spotify.com/artist/5pKCCKE2vguRMq79HR0DIv",
+                "source": "spotify"
+            }
+        ],
         "aviella": [
             {
                 "id": "2cBhXqB2n9X1w",
+                "spotify_id": "2cBhXqB2n9X1w",
                 "name": "Aviella",
                 "followers": 482500,
                 "popularity": 62,
@@ -978,6 +1163,7 @@ class SpotifyClient:
             },
             {
                 "id": "aviellawinder",
+                "spotify_id": "aviellawinder",
                 "name": "Aviella Winder",
                 "followers": 15200,
                 "popularity": 38,
@@ -991,6 +1177,7 @@ class SpotifyClient:
         "arta": [
             {
                 "id": "arta_vydia_01",
+                "spotify_id": "arta_vydia_01",
                 "name": "Arta",
                 "followers": 520000,
                 "popularity": 65,

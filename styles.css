@@ -345,6 +345,47 @@ main, .main-content {
   gap: 10px;
 }
 
+/* Page Navigator Arrows */
+.page-nav-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--mt-bg-3);
+  padding: 3px;
+  border-radius: var(--mt-radius-sm);
+  border: 1px solid var(--mt-border);
+}
+
+.nav-arrow-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--mt-fg-2);
+  cursor: pointer;
+  transition: all var(--mt-dur-fast) var(--mt-ease-out);
+}
+
+.nav-arrow-btn:hover:not(:disabled) {
+  background: var(--mt-bg-5);
+  color: var(--mt-fg-1);
+}
+
+.nav-arrow-btn:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+
+.nav-arrow-btn svg, .nav-arrow-btn i {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2.2;
+}
+
 /* Wizard step tabs */
 .wizard-steps, .stage-tabs {
   display: inline-flex;
@@ -2033,6 +2074,136 @@ input[type="range"]::-webkit-slider-thumb:hover {
   color: var(--mt-fg-2);
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* Underwriting Memorandum Modal Styling */
+.memo-card-section {
+  background: var(--mt-bg-3);
+  border: 1px solid var(--mt-border);
+  border-radius: var(--mt-radius-sm);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.memo-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--mt-fg-1);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.memo-formula-box {
+  background: var(--mt-bg-1);
+  border: 1px solid var(--mt-border-strong);
+  border-left: 3px solid var(--mt-red);
+  padding: 12px 14px;
+  border-radius: 4px;
+  font-family: var(--mt-font-mono);
+  font-size: 12px;
+  color: var(--mt-fg-1);
+  margin: 12px 0;
+  line-height: 1.6;
+}
+
+.memo-calc-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--mt-fg-2);
+}
+
+.memo-calc-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--mt-divider);
+}
+
+.memo-calc-row:last-child {
+  border-bottom: 0;
+}
+
+.memo-calc-val {
+  font-family: var(--mt-font-mono);
+  font-weight: 600;
+  color: var(--mt-fg-1);
+}
+
+.memo-highlight-total {
+  background: var(--mt-red-tint);
+  border: 1px solid rgba(216, 26, 55, 0.4);
+  border-radius: var(--mt-radius-sm);
+  padding: 16px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.memo-total-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--mt-fg-1);
+}
+
+.memo-total-val {
+  font-size: 26px;
+  font-weight: 700;
+  font-family: var(--mt-font-mono);
+  color: var(--mt-red);
+}
+
+.memo-diag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.memo-diag-tile {
+  background: var(--mt-bg-2);
+  border: 1px solid var(--mt-border);
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+
+.memo-diag-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--mt-fg-3);
+  font-weight: 600;
+}
+
+.memo-diag-val {
+  font-size: 14px;
+  font-weight: 700;
+  font-family: var(--mt-font-mono);
+  color: var(--mt-fg-1);
+  margin-top: 4px;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #underwritingMemoModal, #underwritingMemoModal * {
+    visibility: visible;
+  }
+  #underwritingMemoModal {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: #fff !important;
+    color: #000 !important;
+  }
 }
 
 /* Animations */

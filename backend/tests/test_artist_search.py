@@ -27,11 +27,10 @@ class TestArtistSearch(unittest.TestCase):
         """Ensure single letter queries like 's' or 'a' do not hijack search with hardcoded Islem or Drake."""
         results = spotify_client.search_artists("Sam")
         self.assertTrue(len(results) > 0)
-        top_name = results[0]["name"]
-        norm_top = spotify_client.normalize_text(top_name)
+        top_name = results[0]["name"].lower().replace(".", "").replace(" ", "")
         self.assertTrue(
-            "sam" in norm_top or "sammy" in norm_top,
-            f"Top result for 'Sam' should contain 'sam', got {top_name!r}"
+            "sam" in top_name or "sammy" in top_name,
+            f"Top result for 'Sam' should contain 'sam', got {results[0]['name']!r}"
         )
 
 

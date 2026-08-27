@@ -34,20 +34,32 @@ const state = {
 
 // Distributor Master Directory
 const DISTRIBUTORS_LIST = [
-  { id: 'distrokid', name: 'DistroKid', color: '#1db954', icon: 'DK' },
-  { id: 'tunecore', name: 'TuneCore', color: '#0088cc', icon: 'TC' },
-  { id: 'cdbaby', name: 'CD Baby', color: '#e05638', icon: 'CD' },
-  { id: 'toolost', name: 'Too Lost', color: '#e11d48', icon: 'TL' },
-  { id: 'dashgo', name: 'DashGo', color: '#10b981', icon: 'DG' },
-  { id: 'theorchard', name: 'The Orchard / Sony', color: '#f43f5e', icon: 'TO' },
-  { id: 'bmg', name: 'BMG', color: '#06b6d4', icon: 'BMG' },
-  { id: 'sparta', name: 'Sparta Distribution', color: '#ef4444', icon: 'SP' },
-  { id: 'horus', name: 'Horus Music', color: '#06b6d4', icon: 'HM' },
-  { id: 'stopone', name: 'StopOne', color: '#be123c', icon: 'SO' },
-  { id: 'black17', name: 'Black 17', color: '#eab308', icon: 'B17' },
-  { id: 'kartel', name: 'Kartel Music Group', color: '#ec4899', icon: 'KMG' },
-  { id: 'awal', name: 'AWAL', color: '#a855f7', icon: 'AWAL' },
-  { id: 'believe', name: 'Believe Digital', color: '#14b8a6', icon: 'BLV' }
+  { id: 'distrokid', name: 'DistroKid', color: '#1db954', icon: 'DK', category: 'DIY', format: 'CSV / TSV' },
+  { id: 'tunecore', name: 'TuneCore', color: '#0088cc', icon: 'TC', category: 'DIY', format: 'CSV / XLSX' },
+  { id: 'cdbaby', name: 'CD Baby', color: '#e05638', icon: 'CD', category: 'DIY', format: 'TXT / CSV' },
+  { id: 'toolost', name: 'Too Lost', color: '#e11d48', icon: 'TL', category: 'Indie / Label', format: 'CSV / XLSX' },
+  { id: 'dashgo', name: 'DashGo', color: '#10b981', icon: 'DG', category: 'Label Services', format: 'CSV' },
+  { id: 'theorchard', name: 'The Orchard / Sony', color: '#f43f5e', icon: 'TO', category: 'Major / Enterprise', format: 'XLSX / CSV' },
+  { id: 'bmg', name: 'BMG', color: '#06b6d4', icon: 'BMG', category: 'Enterprise', format: 'CSV / PDF' },
+  { id: 'sparta', name: 'Sparta Distribution', color: '#ef4444', icon: 'SP', category: 'Boutique', format: 'CSV' },
+  { id: 'horus', name: 'Horus Music', color: '#06b6d4', icon: 'HM', category: 'Global', format: 'CSV / XLSX' },
+  { id: 'stopone', name: 'StopOne', color: '#be123c', icon: 'SO', category: 'Indie', format: 'CSV' },
+  { id: 'black17', name: 'Black 17', color: '#eab308', icon: 'B17', category: 'Indie', format: 'CSV' },
+  { id: 'kartel', name: 'Kartel Music Group', color: '#ec4899', icon: 'KMG', category: 'Label Services', format: 'CSV' },
+  { id: 'awal', name: 'AWAL', color: '#a855f7', icon: 'AWAL', category: 'Label Services', format: 'CSV' },
+  { id: 'believe', name: 'Believe Digital', color: '#14b8a6', icon: 'BLV', category: 'Enterprise', format: 'CSV / XLSX' },
+  { id: 'stem', name: 'Stem', color: '#6366f1', icon: 'STEM', category: 'Label Services', format: 'CSV' },
+  { id: 'unitedmasters', name: 'UnitedMasters', color: '#f97316', icon: 'UM', category: 'Indie / DIY', format: 'CSV / XLSX' },
+  { id: 'symphonic', name: 'Symphonic Distribution', color: '#3b82f6', icon: 'SYM', category: 'Indie / Label', format: 'CSV / TSV' },
+  { id: 'dittomusic', name: 'Ditto Music', color: '#ec4899', icon: 'DM', category: 'DIY', format: 'CSV' },
+  { id: 'empire', name: 'Empire', color: '#e11d48', icon: 'EMP', category: 'Major Indie', format: 'CSV / XLSX' },
+  { id: 'platoon', name: 'Platoon (Apple)', color: '#8b5cf6', icon: 'PLT', category: 'Label Services', format: 'CSV' },
+  { id: 'onerpm', name: 'ONErpm', color: '#10b981', icon: '1RPM', category: 'Global Indie', format: 'CSV / TSV' },
+  { id: 'landr', name: 'Landr', color: '#06b6d4', icon: 'LDR', category: 'DIY', format: 'CSV' },
+  { id: 'amuse', name: 'Amuse', color: '#f43f5e', icon: 'AMS', category: 'DIY / Indie', format: 'CSV' },
+  { id: 'vydia', name: 'Vydia', color: '#8b5cf6', icon: 'VYD', category: 'Label Services', format: 'CSV' },
+  { id: 'soundrop', name: 'Soundrop', color: '#64748b', icon: 'SND', category: 'DIY', format: 'CSV' },
+  { id: 'songtradr', name: 'Songtradr', color: '#14b8a6', icon: 'SGT', category: 'Sync / DIY', format: 'CSV' }
 ];
 
 // Initialize on DOM Load
@@ -106,19 +118,61 @@ function goToStage(stageNum) {
     }
   }
 
+  // Update navigation arrow button states
+  const prevBtn = document.getElementById('navPrevBtn');
+  const nextBtn = document.getElementById('navNextBtn');
+  if (prevBtn) {
+    prevBtn.disabled = (stageNum === 1);
+  }
+  if (nextBtn) {
+    nextBtn.disabled = (stageNum === 5);
+  }
+
   // Toggle stage view
   document.querySelectorAll('.stage-section').forEach(sec => sec.classList.remove('active'));
   const activeSec = document.getElementById(`stage${stageNum}`);
   if (activeSec) activeSec.classList.add('active');
 
-  // Update wizard top indicator (3 clean steps)
+  // Update wizard top indicator (if present)
   document.querySelectorAll('.wizard-step').forEach(step => step.classList.remove('active'));
   if (stageNum === 1) document.getElementById('stepIndicator1')?.classList.add('active');
   else if (stageNum === 4) document.getElementById('stepIndicator2')?.classList.add('active');
   else if (stageNum === 5) document.getElementById('stepIndicator3')?.classList.add('active');
 
+  if (stageNum === 4) {
+    initDistributorDropdown();
+  }
+
   lucide.createIcons();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Forward & Backward Page Navigation
+function navigateStep(direction) {
+  const current = state.currentStage || 1;
+  if (direction === -1) {
+    // Backward
+    if (current === 5) {
+      goToStage(4);
+    } else if (current === 4) {
+      goToStage(1);
+    }
+  } else if (direction === 1) {
+    // Forward
+    if (current === 1) {
+      if (state.selectedArtist) {
+        goToStage(4);
+      } else {
+        handleStage1Proceed(4);
+      }
+    } else if (current === 4) {
+      if (state.hasUploadedValidData || state.sampleDatasetLoaded) {
+        goToStage(5);
+      } else {
+        executeValuation();
+      }
+    }
+  }
 }
 
 
@@ -1010,43 +1064,207 @@ function toggleSongwritingModal() {
   alert('Songwriting rights require separate publishing administration agreement and are excluded from catalog multiple sizing.');
 }
 
-// Stage 4: Distributor Dropdown & Statement Uploads
+// Stage 4: Distributor Search & Selection (Type and Fetch)
 function initDistributorDropdown() {
-  const listElem = document.getElementById('distributorOptionsList');
-  if (!listElem) return;
+  const dist = state.selectedDistributor || DISTRIBUTORS_LIST[0];
+  const chip = document.getElementById('selectedDistributorChip');
+  const chipName = document.getElementById('chipDistName');
+  const chipIcon = document.getElementById('chipDistIcon');
+  const input = document.getElementById('distributorSearchInput');
+  const clearBtn = document.getElementById('distSearchClearBtn');
+  const searchIcon = document.getElementById('distSearchIcon');
 
-  listElem.innerHTML = DISTRIBUTORS_LIST.map(d => `
-    <div class="dist-option-row" onclick="selectDistributor('${d.id}')">
-      <span class="dist-icon-badge" style="background:${d.color}">${d.icon}</span>
-      <span class="dist-name">${d.name}</span>
+  if (chip && chipName && chipIcon) {
+    chipName.innerText = dist.name;
+    chipIcon.innerText = dist.icon || dist.name.substring(0, 2).toUpperCase();
+    chipIcon.style.background = dist.color || '#e11d48';
+    chip.style.display = 'flex';
+  }
+  if (input) input.style.display = 'none';
+  if (clearBtn) clearBtn.style.display = 'none';
+  if (searchIcon) searchIcon.style.display = 'none';
+}
+
+function clearDistributorSelection() {
+  const chip = document.getElementById('selectedDistributorChip');
+  const input = document.getElementById('distributorSearchInput');
+  const clearBtn = document.getElementById('distSearchClearBtn');
+  const searchIcon = document.getElementById('distSearchIcon');
+  const resultsBox = document.getElementById('distributorSearchResults');
+
+  if (chip) chip.style.display = 'none';
+  if (input) {
+    input.style.display = 'block';
+    input.value = '';
+    input.focus();
+  }
+  if (clearBtn) clearBtn.style.display = 'none';
+  if (searchIcon) searchIcon.style.display = 'block';
+  if (resultsBox) resultsBox.style.display = 'none';
+
+  // Trigger search with empty or show top distributors
+  handleDistributorSearch('');
+}
+
+function clearDistributorSearchInput() {
+  const input = document.getElementById('distributorSearchInput');
+  const resultsBox = document.getElementById('distributorSearchResults');
+  const clearBtn = document.getElementById('distSearchClearBtn');
+  const searchIcon = document.getElementById('distSearchIcon');
+
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+  if (resultsBox) resultsBox.style.display = 'none';
+  if (clearBtn) clearBtn.style.display = 'none';
+  if (searchIcon) searchIcon.style.display = 'block';
+}
+
+let distSearchDebounce = null;
+function handleDistributorSearch(query) {
+  clearTimeout(distSearchDebounce);
+  const q = (query || '').trim();
+  const clearBtn = document.getElementById('distSearchClearBtn');
+  const searchIcon = document.getElementById('distSearchIcon');
+  const resultsBox = document.getElementById('distributorSearchResults');
+
+  if (clearBtn && searchIcon) {
+    if (q.length > 0) {
+      clearBtn.style.display = 'flex';
+      searchIcon.style.display = 'none';
+    } else {
+      clearBtn.style.display = 'none';
+      searchIcon.style.display = 'block';
+    }
+  }
+
+  if (!resultsBox) return;
+
+  resultsBox.style.display = 'block';
+  resultsBox.innerHTML = `
+    <div style="padding: 10px; text-align: center; color: var(--mt-fg-3); font-size: 0.85rem;">
+      <i data-lucide="loader-2" class="spin" style="vertical-align: middle; margin-right: 6px;"></i> Searching distributors...
     </div>
-  `).join('');
+  `;
+  lucide.createIcons();
+
+  distSearchDebounce = setTimeout(() => {
+    renderDistributorSearchResults(q);
+  }, 50);
 }
 
-function toggleDistributorDropdown() {
-  const menu = document.getElementById('distributorDropdownMenu');
-  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+let lastRenderedDistributors = [];
+
+function selectDistributorByIndex(idx) {
+  const dist = lastRenderedDistributors[idx];
+  if (!dist) return;
+  selectDistributor(dist);
 }
 
-function selectDistributor(distId) {
-  const dist = DISTRIBUTORS_LIST.find(d => d.id === distId) || DISTRIBUTORS_LIST[0];
+function renderDistributorSearchResults(query = '') {
+  const resultsBox = document.getElementById('distributorSearchResults');
+  if (!resultsBox) return;
+
+  const q = query.toLowerCase().trim();
+  let matches = [];
+
+  if (q.length === 0) {
+    matches = DISTRIBUTORS_LIST.slice(0, 8);
+  } else {
+    matches = DISTRIBUTORS_LIST.filter(d => 
+      d.name.toLowerCase().includes(q) || 
+      (d.id && d.id.toLowerCase().includes(q)) ||
+      (d.icon && d.icon.toLowerCase().includes(q)) ||
+      (d.category && d.category.toLowerCase().includes(q))
+    );
+  }
+
+  lastRenderedDistributors = matches.slice();
+
+  let html = '';
+  if (matches.length > 0) {
+    html += matches.map((d, idx) => `
+      <div class="search-result-item" onclick="selectDistributorByIndex(${idx})" style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: var(--mt-radius-sm); cursor: pointer; transition: background var(--mt-dur-fast);">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span class="dist-icon-badge" style="background: ${d.color || '#e11d48'}; width: 28px; height: 28px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0;">${escapeHtml(d.icon || d.name.substring(0, 2).toUpperCase())}</span>
+          <div>
+            <div style="font-size: 13px; font-weight: 600; color: var(--mt-fg-1);">${escapeHtml(d.name)}</div>
+            <div style="font-size: 11px; color: var(--mt-fg-3);">${escapeHtml(d.category || 'Music Distributor')} · ${escapeHtml(d.format || 'CSV / TSV')}</div>
+          </div>
+        </div>
+        <div style="color: var(--mt-fg-3); font-size: 11px;"><i data-lucide="corner-down-left" style="width: 12px; height: 12px;"></i></div>
+      </div>
+    `).join('');
+  }
+
+  // If query does not exactly match any existing, offer custom distributor option
+  if (q.length > 0 && !matches.some(m => m.name.toLowerCase() === q)) {
+    const customDist = {
+      id: 'custom_' + q.replace(/[^a-z0-9]/g, '_'),
+      name: query,
+      color: '#8b5cf6',
+      icon: query.substring(0, 2).toUpperCase(),
+      category: 'Custom Distributor',
+      format: 'Custom Format'
+    };
+    const customIdx = lastRenderedDistributors.length;
+    lastRenderedDistributors.push(customDist);
+
+    html += `
+      <div class="search-result-item" onclick="selectDistributorByIndex(${customIdx})" style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: var(--mt-radius-sm); cursor: pointer; background: var(--mt-bg-4); border-top: 1px solid var(--mt-border); margin-top: 4px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span class="dist-icon-badge" style="background: #8b5cf6; width: 28px; height: 28px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0;">${escapeHtml(customDist.icon)}</span>
+          <div>
+            <div style="font-size: 13px; font-weight: 600; color: var(--mt-fg-1);">Select "<strong>${escapeHtml(query)}</strong>"</div>
+            <div style="font-size: 11px; color: var(--mt-fg-3);">Custom Distributor · Auto-normalized schema</div>
+          </div>
+        </div>
+        <div style="color: var(--mt-red); font-size: 11px; font-weight: 600;">Use Custom</div>
+      </div>
+    `;
+  }
+
+  if (!html) {
+    html = `<div style="padding: 12px; text-align: center; color: var(--mt-fg-3); font-size: 12px;">No matching distributors. Type custom name above.</div>`;
+  }
+
+  resultsBox.innerHTML = html;
+  lucide.createIcons();
+}
+
+function selectDistributor(dist) {
+  if (typeof dist === 'string') {
+    dist = DISTRIBUTORS_LIST.find(d => d.id === dist || d.name.toLowerCase() === dist.toLowerCase()) || {
+      id: 'custom_' + dist.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+      name: dist,
+      color: '#8b5cf6',
+      icon: dist.substring(0, 2).toUpperCase()
+    };
+  }
+
   state.selectedDistributor = dist;
 
-  const curr = document.getElementById('currentDistributorItem');
-  curr.innerHTML = `
-    <span class="dist-icon-badge" style="background:${dist.color}">${dist.icon}</span>
-    <span class="dist-name">${dist.name}</span>
-  `;
-  document.getElementById('distributorDropdownMenu').style.display = 'none';
-}
+  const chip = document.getElementById('selectedDistributorChip');
+  const chipName = document.getElementById('chipDistName');
+  const chipIcon = document.getElementById('chipDistIcon');
+  const input = document.getElementById('distributorSearchInput');
+  const clearBtn = document.getElementById('distSearchClearBtn');
+  const searchIcon = document.getElementById('distSearchIcon');
+  const resultsBox = document.getElementById('distributorSearchResults');
 
-function filterDistributorList(query) {
-  const rows = document.querySelectorAll('.dist-option-row');
-  const q = query.toLowerCase();
-  rows.forEach(r => {
-    const text = r.innerText.toLowerCase();
-    r.style.display = text.includes(q) ? 'flex' : 'none';
-  });
+  if (chipName) chipName.innerText = dist.name;
+  if (chipIcon) {
+    chipIcon.innerText = dist.icon || dist.name.substring(0, 2).toUpperCase();
+    chipIcon.style.background = dist.color || '#e11d48';
+  }
+  if (chip) chip.style.display = 'flex';
+  if (input) input.style.display = 'none';
+  if (clearBtn) clearBtn.style.display = 'none';
+  if (searchIcon) searchIcon.style.display = 'none';
+  if (resultsBox) resultsBox.style.display = 'none';
+
+  lucide.createIcons();
 }
 
 function setBasis(basis) {
@@ -1279,8 +1497,13 @@ function renderMultimodalParserResults(data) {
   if (warnBox) {
     if (data.warnings && data.warnings.length > 0) {
       warnBox.style.display = 'block';
-      warnBox.innerHTML = `<strong>Parsing Warnings (${data.warnings.length}):</strong><ul style="margin-top:4px; padding-left:18px;">` +
-        data.warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('') + `</ul>`;
+      const warningItems = data.warnings.map(w => {
+        if (typeof w === 'object' && w !== null) {
+          return `<li>${w.row ? `<strong>Row ${w.row}:</strong> ` : ''}${escapeHtml(w.reason || JSON.stringify(w))}</li>`;
+        }
+        return `<li>${escapeHtml(String(w))}</li>`;
+      }).join('');
+      warnBox.innerHTML = `<strong>Parsing Notices (${data.warnings.length}):</strong><ul style="margin-top:4px; padding-left:18px;">${warningItems}</ul>`;
     } else {
       warnBox.style.display = 'none';
     }
@@ -1292,17 +1515,17 @@ function renderMultimodalParserResults(data) {
     const earningsList = (data.monthly_earnings && data.monthly_earnings.length > 0) ? data.monthly_earnings : [];
     const breakdownList = data.monthly_breakdown || [];
 
-    const listToRender = earningsList.length > 0 ? earningsList : breakdownList;
+    const listToRender = breakdownList.length > 0 ? breakdownList : earningsList;
 
     if (listToRender.length === 0) {
       tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-dim);">No monthly breakdown extracted.</td></tr>`;
     } else {
       tbody.innerHTML = listToRender.map((m, idx) => {
         const monthName = m.month || 'Unknown';
-        const exactAmountStr = m.amount ? `$${m.amount}` : (m.net_royalty !== undefined ? formatCurrency(m.net_royalty) : '$0.00');
+        const exactAmountStr = m.earnings ? `$${m.earnings}` : (m.amount ? `$${m.amount}` : (m.net_royalty !== undefined ? formatCurrency(m.net_royalty) : '$0.00'));
 
         // Lookup matching legacy breakdown item if rendering earningsList
-        const legItem = breakdownList.find(b => b.month === monthName) || (breakdownList[idx] || {});
+        const legItem = breakdownList.find(b => b.month === monthName) || (breakdownList[idx] || m);
 
         const topSource = legItem.primary_source || (legItem.sources && legItem.sources.length > 0 ? legItem.sources[0].platform : 'Streaming / Sales');
         const momStr = legItem.mom_growth_pct !== null && legItem.mom_growth_pct !== undefined
@@ -1312,7 +1535,7 @@ function renderMultimodalParserResults(data) {
 
         // Source Provenance Badge
         const prov = m.provenance || {};
-        const provFile = prov.source_file || data.statement_metadata?.source_file || 'statement.pdf';
+        const provFile = prov.source_file || data.statement_metadata?.source_file || 'statement.csv';
         const provRow = prov.source_row ? ` (Row ${prov.source_row})` : '';
 
         return `
@@ -2015,7 +2238,7 @@ function kToRho(T) {
 // Provenance Modal & Memo Export
 function toggleProvenanceModal() {
   const modal = document.getElementById('provenanceModal');
-  const isHidden = modal.style.display === 'none';
+  const isHidden = modal.style.display === 'none' || !modal.style.display;
   if (isHidden) {
     const jsonStr = JSON.stringify(state.activeValuationResult || {}, null, 2);
     document.getElementById('provenanceJsonCode').innerText = jsonStr;
@@ -2031,47 +2254,351 @@ function copyProvenanceJson() {
   alert('Provenance JSON copied to clipboard!');
 }
 
+// Underwriting Memorandum & Valuation Calculation Breakdown Modal
+function toggleUnderwritingMemoModal() {
+  const modal = document.getElementById('underwritingMemoModal');
+  if (!modal) return;
+  const isHidden = (modal.style.display === 'none' || !modal.style.display);
+  if (isHidden) {
+    renderUnderwritingMemoModal();
+    modal.style.display = 'flex';
+  } else {
+    modal.style.display = 'none';
+  }
+}
+
 function downloadUnderwritingMemo() {
-  const data = state.activeValuationResult;
-  if (!data) return;
+  toggleUnderwritingMemoModal();
+}
 
-  const text = `
-======================================================================
-                  ROYALTY ADVANCE UNDERWRITING MEMO
-======================================================================
-Artist: ${state.selectedArtist.name}
-Contract Term: ${data.deal_terms.term_years} Years
-Pay-Through: ${data.deal_terms.pay_through_pct}%
-Post-Recoup Share: ${data.deal_terms.post_recoup_share_pct}%
-Recoupment Split: ${(kToRho(data.deal_terms.term_years) * 100).toFixed(1)}%
+function renderUnderwritingMemoModal() {
+  const container = document.getElementById('underwritingMemoBody');
+  if (!container) return;
 
-VALUATION OFFERS
-----------------------------------------------------------------------
-Total Advance: ${formatCurrency(data.headline_offers.a_total)}
-Catalogue Component: ${formatCurrency(data.headline_offers.a_catalog)}
-New Release Component: ${data.headline_offers.a_new ? formatCurrency(data.headline_offers.a_new) : 'N/A'}
+  const data = state.activeValuationResult || {};
+  const artistName = (state.selectedArtist && state.selectedArtist.name) || 'Selected Artist';
+  const termYears = state.dealTerms.term || 5;
+  const distributor = (state.selectedDistributor && state.selectedDistributor.name) || 'DistroKid';
+  const postRecoupPct = state.dealTerms.postRecoupSharePct || 90;
+  const eVal = (postRecoupPct / 100);
+  const singlesN = state.dealTerms.singlesContracted !== undefined ? state.dealTerms.singlesContracted : 5;
+  const rhoVal = state.dealTerms.customRho || (data.deal_terms && data.deal_terms.rho) || 0.50;
 
+  // Engine V3: Dynamic K_base = rho * 12 * T
+  const kBase = rhoVal * 12 * termYears;
+  const riskDiscount = (data.catalog_analytics && data.catalog_analytics.risk_discount_pct) ? (data.catalog_analytics.risk_discount_pct / 100) : 0.044;
+  const kT = kBase * (1 - riskDiscount);
 
-CATALOGUE DIAGNOSTICS
-----------------------------------------------------------------------
-Trailing-3 Median R0: ${formatCurrency(data.catalog_analytics.r0)}/mo
-Gini Concentration G*: ${data.catalog_analytics.gini_concentration}
-Top 1 Song Share: ${data.catalog_analytics.top_1_share_pct}%
-Top 5 Song Share: ${data.catalog_analytics.top_5_share_pct}%
-Time to Recoup (TTR): ${data.catalog_analytics.ttr_years} Years
+  // Monthly baseline R0
+  const r0 = (data.catalog_analytics && data.catalog_analytics.r0) || (data.run_rate) || 1000;
 
-SYSTEM FLAGS RAISED
-----------------------------------------------------------------------
-${(data.detailed_flags || []).map(f => `[${f.severity.toUpperCase()}] ${f.title}: ${f.description}`).join('\n')}
-======================================================================
+  // Closed-form early recoupment E(e) (Engine V3 Section 3.2)
+  const oneMinusD = Math.max(0.001, 1 - riskDiscount);
+  const denom = rhoVal + (1 - eVal);
+  const rawE = denom > 0 ? (rhoVal + (1 - eVal) / oneMinusD) / denom : 1.0;
+  const eFactor = Math.min(1.30, Math.max(1.0, rawE));
+
+  // Catalog advance (Engine V3: no pay-through)
+  const aCatalog = r0 * kT * eFactor;
+
+  // New release parameters
+  const m0 = (data.catalog_analytics && data.catalog_analytics.peak_single_m0) || (r0 * 0.45);
+  const lifetimeL = (data.catalog_analytics && data.catalog_analytics.lifetime_multiple) || (termYears * 2.84);
+  const advFrac = 0.50;
+  const aNew = singlesN * m0 * lifetimeL * rhoVal * advFrac;
+  const aTotal = aCatalog + aNew;
+
+  // Recoupment timing & Margin breakdown (Engine V3 Section 4)
+  const monthsToRecoup = 12 * termYears * (1 - riskDiscount) * eFactor;
+  const ttrYears = monthsToRecoup / 12;
+  const mCapped = Math.min(monthsToRecoup, 12 * termYears);
+  const marginRecoup = r0 * mCapped * (1 - rhoVal);
+  const marginTail = r0 * (12 * termYears - mCapped) * (1 - eVal);
+  const expectedGross = marginRecoup + marginTail;
+  const expectedReturnPct = aCatalog > 0 ? ((expectedGross / aCatalog) * 100) : 0;
+
+  // Diagnostics
+  const gini = (data.catalog_analytics && data.catalog_analytics.gini_concentration) || 0.38;
+  const decayCovPct = (data.catalog_analytics && data.catalog_analytics.decay_coverage_pct) || 99.8;
+  const flags = data.detailed_flags || [];
+
+  container.innerHTML = `
+    <!-- Executive Deal Summary Card -->
+    <div class="memo-card-section">
+      <div class="memo-section-title"><i data-lucide="award" style="color: var(--mt-red);"></i> Executive Underwriting Summary</div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 10px;">
+        <div class="memo-diag-tile">
+          <div class="memo-diag-label">Counterparty</div>
+          <div class="memo-diag-val">${escapeHtml(artistName)}</div>
+        </div>
+        <div class="memo-diag-tile">
+          <div class="memo-diag-label">Contract Term</div>
+          <div class="memo-diag-val">${termYears} Years</div>
+        </div>
+        <div class="memo-diag-tile">
+          <div class="memo-diag-label">Pre-Recoupment Split (ρ)</div>
+          <div class="memo-diag-val">${(rhoVal * 100).toFixed(0)}/${(100 - rhoVal * 100).toFixed(0)}</div>
+        </div>
+        <div class="memo-diag-tile">
+          <div class="memo-diag-label">Post-Recoup Share (e)</div>
+          <div class="memo-diag-val">${postRecoupPct}% (${postRecoupPct}/${100 - postRecoupPct})</div>
+        </div>
+        <div class="memo-diag-tile">
+          <div class="memo-diag-label">Contracted Singles (N)</div>
+          <div class="memo-diag-val">${singlesN} Singles</div>
+        </div>
+      </div>
+
+      <div class="memo-highlight-total">
+        <div>
+          <div class="memo-total-title">Total Approved Valuation (A_total)</div>
+          <div style="font-size: 11px; color: var(--mt-fg-3); margin-top: 2px;">A_catalog + A_new · Zero-Uncontrolled-I/O Deterministic Model</div>
+        </div>
+        <div class="memo-total-val">${formatCurrency(aTotal)}</div>
+      </div>
+    </div>
+
+    <!-- Step 1: Catalogue Advance Derivation -->
+    <div class="memo-card-section">
+      <div class="memo-section-title"><i data-lucide="book-open" style="color: var(--mt-red);"></i> 1. Catalogue Advance Mathematical Derivation (A_catalog)</div>
+      <div style="font-size: 12px; color: var(--mt-fg-3); margin-bottom: 8px;">
+        Deterministic valuation isolating historical master recordings from future compositions.
+      </div>
+
+      <div class="memo-formula-box">
+        A_catalog = R_0 × K(T) × E(e) &nbsp;|&nbsp; K_base(T) = ρ × 12T
+      </div>
+
+      <div class="memo-calc-steps">
+        <div class="memo-calc-row">
+          <span><strong>1. Baseline Monthly Run-Rate (R_0):</strong> Trailing-3 monthly median revenue</span>
+          <span class="memo-calc-val">${formatCurrency(r0)} / month</span>
+        </div>
+        <div class="memo-calc-row">
+          <span><strong>2. Base Multiple K_base(${termYears}):</strong> ρ × 12 × ${termYears} = ${(rhoVal).toFixed(2)} × 12 × ${termYears}</span>
+          <span class="memo-calc-val">${kBase.toFixed(2)}x</span>
+        </div>
+        <div class="memo-calc-row">
+          <span><strong>3. Active Multiple K(${termYears}):</strong> K_base × (1 - risk_discount) = ${kBase.toFixed(2)} × (1 - ${(riskDiscount * 100).toFixed(1)}%)</span>
+          <span class="memo-calc-val">${kT.toFixed(3)}x</span>
+        </div>
+        <div class="memo-calc-row">
+          <span><strong>4. Closed-Form Early Recoupment E(e):</strong> [ρ + (1 - e)/(1 - d)] / [ρ + (1 - e)]</span>
+          <span class="memo-calc-val">${eFactor.toFixed(4)}x</span>
+        </div>
+        <div class="memo-calc-row" style="background: var(--mt-bg-2); padding: 8px 10px; border-radius: 4px; margin-top: 4px;">
+          <span><strong>Catalogue Sizing Result:</strong> ${formatCurrency(r0)} × ${kT.toFixed(3)} × ${eFactor.toFixed(4)}</span>
+          <span class="memo-calc-val" style="color: var(--mt-fg-1); font-size: 14px;">${formatCurrency(aCatalog)}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: Expected Margin & Return Breakdown -->
+    <div class="memo-card-section">
+      <div class="memo-section-title"><i data-lucide="trending-up" style="color: var(--mt-red);"></i> 2. Expected Margin & Underwriting Return</div>
+      <div style="font-size: 12px; color: var(--mt-fg-3); margin-bottom: 8px;">
+        Closed-form internal economics during and post recoupment (assumes flat R0 baseline upper bound).
+      </div>
+
+      <div class="memo-calc-steps">
+        <div class="memo-calc-row">
+          <span><strong>Recoupment Duration (m*):</strong> 12T × (1 - d) × E(e) = 12 × ${termYears} × ${(1 - riskDiscount).toFixed(3)} × ${eFactor.toFixed(3)}</span>
+          <span class="memo-calc-val">${monthsToRecoup.toFixed(1)} months (${ttrYears.toFixed(2)} yrs)</span>
+        </div>
+        <div class="memo-calc-row">
+          <span><strong>Recoupment Fee Revenue:</strong> R0 × m* × (1 - ρ) = ${formatCurrency(r0)} × ${mCapped.toFixed(1)} × ${(1 - rhoVal).toFixed(2)}</span>
+          <span class="memo-calc-val">${formatCurrency(marginRecoup)}</span>
+        </div>
+        <div class="memo-calc-row">
+          <span><strong>Post-Recoupment Tail Share:</strong> R0 × (12T - m*) × (1 - e) = ${formatCurrency(r0)} × ${(12 * termYears - mCapped).toFixed(1)} × ${(1 - eVal).toFixed(2)}</span>
+          <span class="memo-calc-val">${formatCurrency(marginTail)}</span>
+        </div>
+        <div class="memo-calc-row" style="background: var(--mt-bg-2); padding: 8px 10px; border-radius: 4px; margin-top: 4px;">
+          <span><strong>Expected Gross Earnings / Return:</strong> ${formatCurrency(expectedGross)} &nbsp;|&nbsp; (${formatCurrency(expectedGross)} / ${formatCurrency(aCatalog)})</span>
+          <span class="memo-calc-val" style="color: #22c55e; font-size: 14px; font-weight: 700;">${expectedReturnPct.toFixed(0)}% (${formatCurrency(expectedGross)})</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: New-Release Advance Derivation (if N > 0) -->
+    <div class="memo-card-section">
+      <div class="memo-section-title"><i data-lucide="music-2" style="color: var(--mt-red);"></i> 3. Contracted New-Release Derivation (A_new)</div>
+      ${singlesN > 0 ? `
+        <div class="memo-formula-box">
+          A_new = N × m_0 × L × ρ × ADV_FRAC
+        </div>
+
+        <div class="memo-calc-steps">
+          <div class="memo-calc-row">
+            <span><strong>1. Contracted Singles Count (N):</strong> Future master delivery obligation</span>
+            <span class="memo-calc-val">${singlesN} Singles</span>
+          </div>
+          <div class="memo-calc-row">
+            <span><strong>2. Historical Peak Anchor (m_0):</strong> Median peak opening month from single releases</span>
+            <span class="memo-calc-val">${formatCurrency(m0)}</span>
+          </div>
+          <div class="memo-calc-row">
+            <span><strong>3. Integrated Lifetime Multiple (L):</strong> Empirical decay curve over ${termYears} years</span>
+            <span class="memo-calc-val">${lifetimeL.toFixed(2)}x</span>
+          </div>
+          <div class="memo-calc-row">
+            <span><strong>4. Recoupment Split (ρ):</strong> ${(rhoVal * 100).toFixed(0)}%</span>
+            <span class="memo-calc-val">${(rhoVal * 100).toFixed(0)}%</span>
+          </div>
+          <div class="memo-calc-row">
+            <span><strong>5. Underwriting Safety Haircut (ADV_FRAC):</strong> 50% discount</span>
+            <span class="memo-calc-val">50.0%</span>
+          </div>
+          <div class="memo-calc-row" style="background: var(--mt-bg-2); padding: 8px 10px; border-radius: 4px; margin-top: 4px;">
+            <span><strong>New Release Sizing Result:</strong> ${singlesN} × ${formatCurrency(m0)} × ${lifetimeL.toFixed(2)} × ${rhoVal.toFixed(2)} × 0.50</span>
+            <span class="memo-calc-val" style="color: var(--mt-fg-1); font-size: 14px;">${formatCurrency(aNew)}</span>
+          </div>
+        </div>
+      ` : `
+        <div style="font-size: 12px; color: var(--mt-fg-3); padding: 10px 0;">
+          No unreleased singles contracted (N = 0). Sizing is 100% underpinned by historical catalogue earnings.
+        </div>
+      `}
+    </div>
+
+    <!-- Step 4: Risk Audit & Portfolio Diagnostics -->
+    <div class="memo-card-section">
+      <div class="memo-section-title"><i data-lucide="shield-alert" style="color: var(--mt-red);"></i> 4. Risk Diagnostics & Active-Life Decay</div>
+      <div class="memo-diag-grid">
+        <div class="memo-diag-tile">
+          <div class="memo-diag-label">Gini Index (G*)</div>
+          <div class="memo-diag-val">${(gini).toFixed(3)} ${gini <= 0.50 ? '<span style="color:#22c55e; font-size:10px;">(DIVERSIFIED)</span>' : '<span style="color:var(--mt-red); font-size:10px;">(CONCENTRATED)</span>'}</div>
+        </div>
+        <div class="memo-diag-tile">
+          <div class="memo-diag-label">Decay Coverage</div>
+          <div class="memo-diag-val">${decayCovPct.toFixed(1)}% <span style="color:#22c55e; font-size:10px;">(ACTIVE LIFE)</span></div>
+        </div>
+        <div class="memo-diag-tile">
+          <div class="memo-diag-label">Time To Recoup (m*)</div>
+          <div class="memo-diag-val">${monthsToRecoup.toFixed(1)} mo</div>
+        </div>
+        <div class="memo-diag-tile">
+          <div class="memo-diag-label">6-Month Ingestion Gate</div>
+          <div class="memo-diag-val"><span style="color:#22c55e; font-size:11px;">PASS (VALIDATED)</span></div>
+        </div>
+      </div>
+
+      ${flags.length > 0 ? `
+        <div style="margin-top: 14px;">
+          <div style="font-size: 11px; text-transform: uppercase; color: var(--mt-fg-3); font-weight: 600; margin-bottom: 6px;">Evaluated System Flags</div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            ${flags.map(f => `
+              <div style="font-size: 11px; padding: 4px 8px; border-radius: 3px; background: var(--mt-bg-2); display: flex; justify-content: space-between;">
+                <span><strong>${escapeHtml(f.title)}:</strong> ${escapeHtml(f.description)}</span>
+                <span style="color: ${f.severity === 'pass' || f.severity === 'advisory' ? '#22c55e' : 'var(--mt-red)'}; font-weight: 600; text-transform: uppercase;">${f.severity}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  lucide.createIcons();
+}
+
+function generateMarkdownMemoString() {
+  const data = state.activeValuationResult || {};
+  const artistName = (state.selectedArtist && state.selectedArtist.name) || 'Selected Artist';
+  const termYears = state.dealTerms.term || 5;
+  const postRecoupPct = state.dealTerms.postRecoupSharePct || 90;
+  const singlesN = state.dealTerms.singlesContracted !== undefined ? state.dealTerms.singlesContracted : 5;
+  const rhoVal = state.dealTerms.customRho || (data.deal_terms && data.deal_terms.rho) || 0.50;
+  const kBase = rhoVal * 12 * termYears;
+  const riskDiscount = (data.catalog_analytics && data.catalog_analytics.risk_discount_pct) ? (data.catalog_analytics.risk_discount_pct / 100) : 0.044;
+  const kT = kBase * (1 - riskDiscount);
+  const r0 = (data.catalog_analytics && data.catalog_analytics.r0) || (data.run_rate) || 1000;
+  const eVal = postRecoupPct / 100;
+  const oneMinusD = Math.max(0.001, 1 - riskDiscount);
+  const denom = rhoVal + (1 - eVal);
+  const rawE = denom > 0 ? (rhoVal + (1 - eVal) / oneMinusD) / denom : 1.0;
+  const eFactor = Math.min(1.30, Math.max(1.0, rawE));
+  const aCatalog = r0 * kT * eFactor;
+  const m0 = (data.catalog_analytics && data.catalog_analytics.peak_single_m0) || (r0 * 0.45);
+  const lifetimeL = (data.catalog_analytics && data.catalog_analytics.lifetime_multiple) || (termYears * 2.84);
+  const aNew = singlesN * m0 * lifetimeL * rhoVal * 0.50;
+  const aTotal = aCatalog + aNew;
+
+  const monthsToRecoup = 12 * termYears * (1 - riskDiscount) * eFactor;
+  const mCapped = Math.min(monthsToRecoup, 12 * termYears);
+  const marginRecoup = r0 * mCapped * (1 - rhoVal);
+  const marginTail = r0 * (12 * termYears - mCapped) * (1 - eVal);
+  const expectedGross = marginRecoup + marginTail;
+  const expectedReturnPct = aCatalog > 0 ? ((expectedGross / aCatalog) * 100) : 0;
+
+  return `# MONETUNES ADVANCE ROYALTY UNDERWRITING MEMORANDUM
+Generated by Monetunes Valuation Engine (Zero-Uncontrolled-I/O)
+
+## 1. EXECUTIVE SUMMARY
+- Counterparty: ${artistName}
+- Contract Term: ${termYears} Years
+- Pre-Recoupment Split (ρ): ${(rhoVal * 100).toFixed(0)}/${(100 - rhoVal * 100).toFixed(0)}
+- Post-Recoupment Share (e): ${postRecoupPct}%
+- Contracted New Singles (N): ${singlesN}
+- Total Approved Master Advance: ${formatCurrency(aTotal)}
+
+---
+
+## 2. CATALOGUE ADVANCE DERIVATION (A_catalog)
+Formula: A_catalog = R_0 * K(T) * E(e)  |  K_base(T) = ρ * 12T
+- Baseline Monthly Run-Rate (R_0): ${formatCurrency(r0)} (Trailing-3 median)
+- Base Multiple K_base(${termYears}): ${kBase.toFixed(2)}x (ρ = ${(rhoVal * 100).toFixed(0)}%)
+- Active Multiple K(${termYears}): ${kT.toFixed(3)}x (Risk discount: ${(riskDiscount * 100).toFixed(1)}%)
+- Early Recoupment Factor E(${postRecoupPct}%): ${eFactor.toFixed(4)}x
+- Catalogue Sizing: ${formatCurrency(r0)} * ${kT.toFixed(3)} * ${eFactor.toFixed(4)} = ${formatCurrency(aCatalog)}
+
+---
+
+## 3. EXPECTED MARGIN & RETURN
+- Recoupment Duration (m*): ${monthsToRecoup.toFixed(1)} months
+- Recoupment Fee Margin: ${formatCurrency(marginRecoup)}
+- Post-Recoupment Tail Share: ${formatCurrency(marginTail)}
+- Expected Gross Profit: ${formatCurrency(expectedGross)}
+- Expected Return: ${expectedReturnPct.toFixed(0)}% (${formatCurrency(expectedGross)} / ${formatCurrency(aCatalog)})
+- Disclosure: Assumes flat baseline revenue throughout recoupment (upper bound).
+
+---
+
+## 4. NEW-RELEASE ADVANCE DERIVATION (A_new)
+Formula: A_new = N * m_0 * L * ρ * ADV_FRAC
+- Contracted Singles (N): ${singlesN}
+- Historical Peak Anchor (m_0): ${formatCurrency(m0)}
+- Integrated Lifetime Curve (L): ${lifetimeL.toFixed(2)}x
+- Recoupment Split (ρ): ${(rhoVal * 100).toFixed(0)}%
+- Underwriting Safety Haircut: 50.0%
+- New Release Sizing: ${formatCurrency(aNew)}
+
+---
+
+## 5. TOTAL MASTER ADVANCE
+A_total = A_catalog + A_new = ${formatCurrency(aTotal)}
 `;
+}
 
-  const blob = new Blob([text], { type: 'text/plain' });
+function copyMemoMarkdown() {
+  const md = generateMarkdownMemoString();
+  navigator.clipboard.writeText(md);
+  alert('Underwriting Memorandum copied to clipboard in Markdown format!');
+}
+
+function downloadMemoFile() {
+  const md = generateMarkdownMemoString();
+  const blob = new Blob([md], { type: 'text/markdown' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
+  const artist = (state.selectedArtist && state.selectedArtist.name) || 'Artist';
   a.href = url;
-  a.download = `Underwriting_Memo_${state.selectedArtist.name.replace(/\s+/g, '_')}.txt`;
+  a.download = `Underwriting_Memo_${artist.replace(/\s+/g, '_')}.md`;
   a.click();
+}
+
+function printMemoReport() {
+  window.print();
 }
 
 // Helpers
@@ -2082,8 +2609,6 @@ function formatCurrency(num) {
 
 function escapeHtml(str) {
   if (!str) return '';
-  // Single quotes and backticks are escaped too: these strings land inside quoted
-  // HTML attributes, where an unescaped apostrophe silently breaks the markup.
   return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

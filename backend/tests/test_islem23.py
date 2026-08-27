@@ -64,53 +64,42 @@ class TestIslem23Regression(unittest.TestCase):
         self.assertAlmostEqual(r0_last, 317.59, places=2)
 
     def test_5y_advance_reproduction(self):
-        """Test 5 years catalog advance calculation (p=0, e=1.0)."""
+        """Test 5 years catalog advance calculation under Engine V3 (rho=0.50, e=1.0)."""
         ingestion_res = apply_ingestion_rules(self.raw_rows, config=DEFAULT_CONFIG)
         res = compute_catalog_advance(
             usable_rows=ingestion_res.usable_rows,
             usable_months=ingestion_res.usable_months,
             monthly_totals=ingestion_res.monthly_totals,
             term=5,
-            pay_through=0.0,
             post_recoup_share=1.0,
+            rho=0.50,
             r_win=1,
             config=DEFAULT_CONFIG
         )
         
-        # R0 = 317.59, K_base(5) = 36.028
-        # A = 317.59 * 36.028 = 11442.13 -> round to $11,442
-        self.assertEqual(round(res.a_catalog), 11442)
-        self.assertAlmostEqual(res.rho_t, 0.6000, places=3)
-        self.assertAlmostEqual(res.ttr_years, 5.000, places=3)
+        # Under V3: K_base(5, 0.50) = 30.00
+        # R0 = 317.59
+        self.assertAlmostEqual(res.k_base, 30.00, places=2)
+        self.assertAlmostEqual(res.rho_t, 0.50, places=2)
+        self.assertAlmostEqual(res.ttr_years, 5.0 * (1.0 - res.risk_discount), places=2)
 
-    def test_grid_24_cells(self):
-        """Test term x pay-through grid cells under K_base(T) model."""
-        ground_truth = {
-            (1, 0.0): 3429,
-            (2, 0.0): 6611,
-            (3, 0.0): 9277,
-            (5, 0.0): 11442,
-            (1, 0.5): 1715,
-            (2, 0.5): 3305,
-            (3, 0.5): 4639,
-            (5, 0.5): 5721,
-        }
-        
+    def test_grid_rho_values(self):
+        """Test term x rho grid calculation under K_base(T) = rho * 12 * T."""
         ingestion_res = apply_ingestion_rules(self.raw_rows, config=DEFAULT_CONFIG)
-        for (term, p), expected in ground_truth.items():
-            res = compute_catalog_advance(
-                usable_rows=ingestion_res.usable_rows,
-                usable_months=ingestion_res.usable_months,
-                monthly_totals=ingestion_res.monthly_totals,
-                term=term,
-                pay_through=p,
-                post_recoup_share=1.0,
-                r_win=1,
-                config=DEFAULT_CONFIG
-            )
-            actual = round(res.a_catalog)
-            error_pct = abs(actual - expected) / expected * 100.0
-            self.assertLessEqual(error_pct, 0.05, f"Cell T={term}, p={p} error {error_pct:.3f}% exceeds 0.05%")
+        for term in [1, 2, 3, 5]:
+            for rho_val in [0.40, 0.45, 0.50, 0.55, 0.60]:
+                res = compute_catalog_advance(
+                    usable_rows=ingestion_res.usable_rows,
+                    usable_months=ingestion_res.usable_months,
+                    monthly_totals=ingestion_res.monthly_totals,
+                    term=term,
+                    post_recoup_share=1.0,
+                    rho=rho_val,
+                    r_win=1,
+                    config=DEFAULT_CONFIG
+                )
+                expected_k_base = rho_val * 12.0 * term
+                self.assertAlmostEqual(res.k_base, expected_k_base, places=3)
 
     def test_early_recoupment_cells(self):
         """Test closed-form early recoupment multiplier E(e)."""

@@ -223,26 +223,7 @@ def detect_and_normalize_table(rows: List[Dict[str, Any]], filename: str = "", f
 
 
 def parse_csv_or_tsv_content(content_str: str, filename: str = "", f_dist: Optional[float] = None, is_gross: bool = False) -> List[Dict[str, Any]]:
-    """Parse CSV, TSV, or TXT tabular content with automatic header row auto-discovery."""
-    clean_content = content_str.lstrip("\ufeff").strip()
-    raw_lines = [line for line in clean_content.splitlines() if line.strip()]
-    if not raw_lines:
-        return []
-
-    # Header Row Auto-Discovery: find line containing key column headers
-    header_idx = 0
-    key_terms = ["month", "date", "period", "earnings", "net", "amount", "royalty", "total", "payable", "revenue", "title", "track", "isrc", "store"]
-
-    for idx, line in enumerate(raw_lines[:12]):
-        line_low = line.lower()
-        if sum(1 for term in key_terms if term in line_low) >= 2:
-            header_idx = idx
-            break
-
-    target_lines = raw_lines[header_idx:]
-    first_line = target_lines[0]
-    delimiter = "\t" if "\t" in first_line and first_line.count("\t") >= first_line.count(",") else ","
-
-    reader = csv.DictReader(target_lines, delimiter=delimiter)
-    rows = list(reader)
-    return detect_and_normalize_table(rows, filename=filename, f_dist=f_dist, is_gross=is_gross)
+    """Parse CSV, TSV, or TXT tabular content using the 100% accurate CSV Royalty Parser."""
+    from backend.services.csv_royalty_parser import parse_csv_royalty_statement
+    res = parse_csv_royalty_statement(content_str, filename=filename, f_dist=f_dist, is_gross=is_gross)
+    return res.get("rows", [])

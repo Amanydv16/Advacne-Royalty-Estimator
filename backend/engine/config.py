@@ -48,19 +48,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "R_TAIL_MAX": 0.90,     # Guard: tail ratio above which extrapolation is refused
     "E_MAX": 1.30,          # Guard: cap on early-recoupment uplift
     
-    # Option A & Option B settings
-    "K_TABLE": {
-        1: 10.797,
-        2: 20.816,
-        3: 29.211,
-        5: 36.028
-    },
-    "RHO_TABLE": {
-        1: 0.90,
-        2: 0.80,
-        3: 0.70,
-        5: 0.60
-    },
+    # Pre-recoupment split settings (Advance Engine V3)
+    "RHO_CHOICES": (0.40, 0.45, 0.50, 0.55, 0.60),
+    "RHO_DEFAULT": 0.50,
     "EARLY_RECOUP_C": 0.296880,
     "EARLY_RECOUP_K": 2.879956,
     

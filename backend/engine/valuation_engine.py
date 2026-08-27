@@ -22,22 +22,36 @@ class ValuationEngine:
     def evaluate_deal(
         self,
         statement_rows: List[Dict[str, Any]],
-        term: int = 3,
-        pay_through: float = 0.0,
-        post_recoup_share: float = 1.0,
+        term: int = 5,
+        post_recoup_share: float = 0.90,
+        rho: float = 0.50,
         singles_contracted: int = 0,
         rights_scope: str = "sound_recording",
         is_gross: bool = False,
         distributor_fee: Optional[float] = None,
         r_win: int = 3,
         payment_tranches: Optional[List[Dict[str, Any]]] = None,
-        artist_metadata: Optional[Dict[str, Any]] = None,
-        custom_rho: Optional[float] = None
+        artist_metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Execute full valuation pipeline on normalized statement rows.
+        Execute full valuation pipeline on normalized statement rows (Advance Engine V3).
         """
         flags: List[str] = []
+
+        # Validate pre-recoupment split (rho) against menu choices (Change B)
+        rho_choices = self.config.get("RHO_CHOICES", (0.40, 0.45, 0.50, 0.55, 0.60))
+        if not any(abs(rho - c) < 1e-4 for c in rho_choices):
+            return {
+                "success": False,
+                "error": f"INVALID_RHO: Pre-recoupment split {rho} is not one of the allowed menu choices {rho_choices}.",
+                "flags": ["INVALID_RHO"],
+                "detailed_flags": [{
+                    "code": "INVALID_RHO",
+                    "severity": "blocking",
+                    "title": "Invalid Recoupment Split",
+                    "description": f"Pre-recoupment split must be one of {rho_choices}."
+                }]
+            }
 
         # Scope check (Section 4.3): Only sound recording is currently supported
         if rights_scope.lower() not in ["sound_recording", "sound recording", "recording"]:
@@ -80,17 +94,16 @@ class ValuationEngine:
                 }
             flags.append("GROSS_BASIS_APPLIED")
 
-        # Step 4, 5, 6: Catalogue Advance
+        # Step 4, 5, 6: Catalogue Advance (Engine V3)
         catalog_res = compute_catalog_advance(
             usable_rows=ingestion_res.usable_rows,
             usable_months=ingestion_res.usable_months,
             monthly_totals=ingestion_res.monthly_totals,
             term=term,
-            pay_through=pay_through,
             post_recoup_share=post_recoup_share,
+            rho=rho,
             r_win=r_win,
-            config=self.config,
-            custom_rho=custom_rho
+            config=self.config
         )
 
         # Step 7, 8, 9, 10: New-Release Advance
@@ -129,7 +142,7 @@ class ValuationEngine:
         a_new = round(new_release_res.a_new, 2) if (new_release_res and new_release_res.is_available and new_release_res.a_new is not None) else None
         a_total = round(a_catalog + (a_new or 0.0), 2)
 
-        # Calculate All-Year Estimations (1Y, 2Y, 3Y, 4Y, 5Y) for comprehensive chart & comparison
+        # Calculate All-Year Estimations (1Y, 2Y, 3Y, 4Y, 5Y)
         multi_year_estimates = []
         for t_year in [1, 2, 3, 4, 5]:
             cat_t = compute_catalog_advance(
@@ -137,8 +150,8 @@ class ValuationEngine:
                 usable_months=ingestion_res.usable_months,
                 monthly_totals=ingestion_res.monthly_totals,
                 term=t_year,
-                pay_through=pay_through,
                 post_recoup_share=post_recoup_share,
+                rho=rho,
                 r_win=r_win,
                 config=self.config
             )
@@ -165,6 +178,11 @@ class ValuationEngine:
                 "k_active": round(cat_t.k_t, 3),
                 "rho_t_pct": round(cat_t.rho_t * 100, 1),
                 "ttr_years": round(cat_t.ttr_years, 2),
+                "months_to_recoup": round(cat_t.months_to_recoup, 1),
+                "margin_recoup": round(cat_t.margin_recoup, 2),
+                "margin_tail": round(cat_t.margin_tail, 2),
+                "expected_gross": round(cat_t.expected_gross, 2),
+                "expected_return_pct": round(cat_t.expected_return * 100, 1),
                 "risk_discount_pct": round(cat_t.risk_discount * 100, 2),
                 "new_release_range": {
                     "low": round(nr_t.range_lo, 2) if (nr_t and nr_t.range_lo) else None,
@@ -177,10 +195,11 @@ class ValuationEngine:
             "artist": artist_metadata or {"name": "Artist"},
             "deal_terms": {
                 "term_years": catalog_res.term,
-                "pay_through_pct": round(pay_through * 100, 1),
                 "post_recoup_share_pct": round(post_recoup_share * 100, 1),
                 "singles_contracted": singles_contracted,
-                "recoupment_split_pct": round(catalog_res.rho_t * 100, 1)
+                "rho": catalog_res.rho_t,
+                "recoupment_split_pct": round(catalog_res.rho_t * 100, 1),
+                "months_to_recoup": round(catalog_res.months_to_recoup, 1)
             },
             "headline_offers": {
                 "a_catalog": a_catalog,
@@ -191,12 +210,23 @@ class ValuationEngine:
                     "high": round(new_release_res.range_hi, 2) if new_release_res and new_release_res.range_hi else None
                 } if new_release_res and new_release_res.is_available else None
             },
+            "expected_margin": {
+                "margin_recoup": round(catalog_res.margin_recoup, 2),
+                "margin_tail": round(catalog_res.margin_tail, 2),
+                "expected_gross": round(catalog_res.expected_gross, 2),
+                "expected_return_pct": round(catalog_res.expected_return * 100, 1),
+                "expected_return": round(catalog_res.expected_return, 4),
+                "months_to_recoup": round(catalog_res.months_to_recoup, 1)
+            },
             "multi_year_estimates": multi_year_estimates,
             "catalog_analytics": {
                 "r0": round(catalog_res.r0, 2),
                 "r0_last": round(catalog_res.r0_last, 2),
                 "r0_window_months": catalog_res.r0_window_months,
                 "ttr_years": round(catalog_res.ttr_years, 2),
+                "months_to_recoup": round(catalog_res.months_to_recoup, 1),
+                "decay_coverage_pct": round(catalog_res.decay_coverage * 100, 2),
+                "d_decay": round(catalog_res.d_decay, 4),
                 "gini_concentration": round(catalog_res.gini_star, 3) if catalog_res.gini_star is not None else None,
                 "song_count": catalog_res.song_count,
                 "top_1_share_pct": round(catalog_res.top_1_share * 100, 1),

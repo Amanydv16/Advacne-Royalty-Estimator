@@ -48,13 +48,12 @@ class TestAcceptanceSuite(unittest.TestCase):
         res_p2 = self.engine.evaluate_deal(
             statement_rows=rows,
             term=5,
-            pay_through=0.0,
             post_recoup_share=1.0,
+            rho=0.50,
             singles_contracted=0,
             r_win=1
         )
         self.assertTrue(res_p2["success"])
-        # R0 = 2859 * 36.028 = 103004.0; with Arta base R0=2859 at K=36.028 ~ 98175 after risk discount
         self.assertIsNotNone(res_p2["headline_offers"]["a_catalog"])
 
     def test_orangle_must_refuse(self):

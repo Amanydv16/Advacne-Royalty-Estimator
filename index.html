@@ -71,7 +71,15 @@
         </div>
 
         <div class="right">
-          <span class="badge-env">MONETUNES ENGINE v2.0</span>
+          <!-- Page Navigator Arrows -->
+          <div class="page-nav-controls">
+            <button class="nav-arrow-btn" id="navPrevBtn" title="Previous Step" onclick="navigateStep(-1)" disabled>
+              <i data-lucide="chevron-left"></i>
+            </button>
+            <button class="nav-arrow-btn" id="navNextBtn" title="Next Step" onclick="navigateStep(1)">
+              <i data-lucide="chevron-right"></i>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -185,25 +193,26 @@
 
             <div class="upload-grid-layout">
 
-              <!-- Left: Distributor Picker -->
+              <!-- Left: Distributor Picker (Type and Fetch) -->
               <div class="panel distributor-select-panel">
-                <label class="deal-option-label">Select a Distributor</label>
+                <label class="deal-option-label">Primary Distributor</label>
 
-                <div class="custom-select-wrapper">
-                  <div class="custom-select-trigger" id="distributorSelectTrigger" onclick="toggleDistributorDropdown()">
-                    <div class="distributor-item-current" id="currentDistributorItem">
-                      <span class="dist-icon-badge" style="background: #1db954;">DK</span>
-                      <span class="dist-name">DistroKid</span>
+                <div class="form-group" style="position: relative; margin-bottom: 12px;">
+                  <div class="search" style="min-width: 100%;">
+                    <div class="selected-artist-chip" id="selectedDistributorChip" style="display: flex;">
+                      <span class="dist-icon-badge" id="chipDistIcon" style="background: #1db954; width: 22px; height: 22px; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #fff; flex-shrink: 0;">DK</span>
+                      <span id="chipDistName" style="font-weight: 600; font-size: 13px;">DistroKid</span>
+                      <button type="button" class="chip-clear-btn" onclick="clearDistributorSelection()"><i data-lucide="x"></i></button>
                     </div>
-                    <i data-lucide="chevron-down" style="width: 14px; height: 14px;"></i>
+                    <input type="text" id="distributorSearchInput" class="text-input" placeholder="Type distributor name"
+                      oninput="handleDistributorSearch(this.value)" autocomplete="off" style="display: none;">
+                    <button type="button" id="distSearchClearBtn" class="input-clear-btn" style="display: none;"
+                      onclick="clearDistributorSearchInput()"><i data-lucide="x"></i></button>
+                    <i data-lucide="search" class="search-icon" id="distSearchIcon" style="display: none;"></i>
                   </div>
 
-                  <div class="custom-select-menu" id="distributorDropdownMenu" style="display: none;">
-                    <div class="dist-search-box">
-                      <input type="text" id="distSearchInput" placeholder="Filter distributors..." oninput="filterDistributorList(this.value)">
-                    </div>
-                    <div class="dist-options-list" id="distributorOptionsList"></div>
-                  </div>
+                  <!-- Distributor Dropdown Results -->
+                  <div class="search-dropdown" id="distributorSearchResults" style="display: none;"></div>
                 </div>
 
                 <div style="font-size: 11px; color: var(--mt-fg-3); line-height: 1.5; margin-top: 4px;">
@@ -216,11 +225,11 @@
 
                 <div class="dropzone-box" id="fileDropzone" onclick="document.getElementById('statementFileInput').click()">
                   <input type="file" id="statementFileInput" multiple
-                    accept=".csv,.tsv,.txt,.xlsx,.xls,.pdf,.docx,.png,.jpg,.jpeg" style="display: none;"
+                    accept=".csv,.tsv,.txt" style="display: none;"
                     onchange="handleFileSelection(event)">
                   <div class="dropzone-icon"><i data-lucide="upload-cloud"></i></div>
                   <div class="dropzone-main-text">Drag & drop statements or <span class="mt-hl">Browse Files</span></div>
-                  <div class="dropzone-formats">PDF, CSV, XLSX, DOCX, TXT, PNG, JPG (Multimodal OCR)</div>
+                  <div class="dropzone-formats">CSV Royalty Statements (.csv)</div>
                 </div>
 
                 <!-- File Staging Status List -->
@@ -231,12 +240,12 @@
                   </div>
                 </div>
 
-                <!-- Multimodal Parser Breakdown -->
+                <!-- Exact Statement Parser Breakdown -->
                 <div id="multimodalParserResultsHub" style="display: none; margin-top: 18px;">
                   <div style="background: var(--mt-bg-3); border: 1px solid var(--mt-border); border-radius: var(--mt-radius-sm); padding: 16px;">
                     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
                       <h4 style="font-size: 14px; font-weight: 700; color: var(--mt-fg-1); display: flex; align-items: center; gap: 8px;">
-                        <i data-lucide="file-check" style="color: var(--mt-red); width: 16px; height: 16px;"></i> Statement Breakdown & Reconciliation
+                        <i data-lucide="file-check" style="color: var(--mt-red); width: 16px; height: 16px;"></i> Statement Breakdown & Month-wise Earnings
                       </h4>
                       <span id="parserStatusBadge" class="pill"><span class="dot"></span> PARSED</span>
                     </div>
@@ -558,6 +567,37 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-primary" onclick="copyProvenanceJson()">Copy JSON</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Underwriting Memorandum & Calculation Breakdown Modal -->
+  <div class="modal-overlay" id="underwritingMemoModal" style="display: none;" onclick="if(event.target===this) toggleUnderwritingMemoModal()">
+    <div class="modal-content modal-large" style="max-width: 880px; max-height: 88vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <i data-lucide="file-spreadsheet" style="color: var(--mt-red); width: 20px; height: 20px;"></i>
+          <div>
+            <h2 style="font-size: 16px; margin: 0;">Underwriting Valuation Memorandum</h2>
+            <div style="font-size: 11px; color: var(--mt-fg-3); margin-top: 2px;">Deterministic backend calculations, formulas, and mathematical derivations</div>
+          </div>
+        </div>
+        <button class="close-btn" onclick="toggleUnderwritingMemoModal()"><i data-lucide="x"></i></button>
+      </div>
+
+      <div class="modal-body" id="underwritingMemoBody" style="padding: 24px; overflow-y: auto; flex: 1;">
+        <!-- Injected via JavaScript -->
+      </div>
+
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; gap: 10px; background: var(--mt-bg-3);">
+        <div style="font-size: 11px; color: var(--mt-fg-3);">
+          Underwriting Valuation Memorandum · Zero-Uncontrolled-I/O
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-ghost" onclick="copyMemoMarkdown()"><i data-lucide="copy" style="width: 14px; height: 14px;"></i> Copy Markdown</button>
+          <button class="btn btn-ghost" onclick="downloadMemoFile()"><i data-lucide="download" style="width: 14px; height: 14px;"></i> Download .MD</button>
+          <button class="btn btn-primary" onclick="printMemoReport()"><i data-lucide="printer" style="width: 14px; height: 14px;"></i> Print / PDF</button>
+        </div>
       </div>
     </div>
   </div>
