@@ -247,7 +247,12 @@
                       <h4 style="font-size: 14px; font-weight: 700; color: var(--mt-fg-1); display: flex; align-items: center; gap: 8px;">
                         <i data-lucide="file-check" style="color: var(--mt-red); width: 16px; height: 16px;"></i> Statement Breakdown & Month-wise Earnings
                       </h4>
-                      <span id="parserStatusBadge" class="pill"><span class="dot"></span> PARSED</span>
+                      <div style="display: flex; align-items: center; gap: 8px;">
+                        <button class="btn btn-ghost btn-sm btn-clear-all" onclick="clearAllUploadedFiles()" title="Clear all statement files from parser">
+                          <i data-lucide="trash-2" style="width: 13px; height: 13px;"></i> Clear All Files
+                        </button>
+                        <span id="parserStatusBadge" class="pill"><span class="dot"></span> PARSED</span>
+                      </div>
                     </div>
 
                     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px;">

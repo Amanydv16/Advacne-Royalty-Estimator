@@ -1041,8 +1041,16 @@ function updateEstimateCalculations() {
   const kMap = { 1: 10.797, 2: 20.816, 3: 29.211, 5: 36.028, 8: 45.0 };
   const kVal = kMap[T] || 29.211;
 
-  const estLow = Math.round(declaredRev * kVal * 0.70 * payFactor);
-  const estHigh = Math.round(declaredRev * kVal * 1.15 * payFactor);
+  // New-release advance component sizing based on contracted singles N
+  const singlesN = state.dealTerms.singlesContracted !== undefined ? state.dealTerms.singlesContracted : 5;
+  const m0Est = declaredRev * 0.05;
+  const lifetimeL = Math.min(24.0, T * 5.5);
+  const rhoVal = (state.dealTerms.customRho && typeof state.dealTerms.customRho === 'number') ? state.dealTerms.customRho : 0.50;
+  const aSingleEst = m0Est * lifetimeL * rhoVal * 0.50;
+  const newReleaseEst = singlesN * aSingleEst;
+
+  const estLow = Math.round((declaredRev * kVal * 0.70 + newReleaseEst * 0.75) * payFactor);
+  const estHigh = Math.round((declaredRev * kVal * 1.15 + newReleaseEst * 1.35) * payFactor);
 
   const lowElem = document.getElementById('estRangeLow');
   const highElem = document.getElementById('estRangeHigh');
@@ -1640,28 +1648,90 @@ function renderUploadedFilesList() {
 
   if (state.sampleDatasetLoaded) {
     container.innerHTML = `
+      <div class="file-staging-header">
+        <span class="file-staging-count">
+          <i data-lucide="check-circle" style="color:#10b981; width:14px; height:14px;"></i> Active Reference Dataset
+        </span>
+        <button class="btn btn-ghost btn-sm btn-clear-all" onclick="clearAllUploadedFiles()" title="Clear and remove dataset">
+          <i data-lucide="trash-2" style="width:13px; height:13px;"></i> Clear All
+        </button>
+      </div>
       <div class="file-item-pill">
         <div>
-          <i data-lucide="check-circle" style="color:#10b981; vertical-align:middle; margin-right:6px;"></i>
+          <i data-lucide="file-spreadsheet" style="color:#10b981; vertical-align:middle; margin-right:6px;"></i>
           <strong>${state.sampleDatasetLoaded.toUpperCase()} Statements</strong> (12 Months Historical Data Loaded)
         </div>
-        <span class="badge-env">VERIFIED 12M</span>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="badge-env">VERIFIED 12M</span>
+          <button class="file-remove-btn" title="Remove dataset" onclick="clearAllUploadedFiles()">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
       </div>
     `;
     lucide.createIcons();
     return;
   }
 
-  container.innerHTML = state.uploadedFiles.map(f => `
-    <div class="file-item-pill">
-      <div>
-        <i data-lucide="file-text" style="vertical-align:middle; margin-right:6px;"></i>
-        <strong>${escapeHtml(f.name)}</strong> (${(f.size / 1024).toFixed(1)} KB)
-      </div>
-      <span class="badge-env">PARSED</span>
+  container.innerHTML = `
+    <div class="file-staging-header">
+      <span class="file-staging-count">
+        <i data-lucide="files" style="color:var(--mt-red); width:14px; height:14px;"></i> Staged Files (${state.uploadedFiles.length})
+      </span>
+      <button class="btn btn-ghost btn-sm btn-clear-all" id="clearAllFilesBtn" onclick="clearAllUploadedFiles()" title="Remove all files from parser">
+        <i data-lucide="trash-2" style="width:13px; height:13px;"></i> Clear All (${state.uploadedFiles.length})
+      </button>
     </div>
-  `).join('');
+    <div class="file-pills-scroll-container">
+      ${state.uploadedFiles.map((f, idx) => `
+        <div class="file-item-pill">
+          <div class="file-item-info">
+            <i data-lucide="file-text" style="vertical-align:middle; margin-right:6px; color:var(--mt-fg-2);"></i>
+            <strong title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</strong>
+            <span class="file-size-tag">(${(f.size / 1024).toFixed(1)} KB)</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="badge-env">PARSED</span>
+            <button class="file-remove-btn" title="Remove ${escapeHtml(f.name)}" onclick="removeUploadedFile(${idx})">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
   lucide.createIcons();
+}
+
+function clearAllUploadedFiles() {
+  state.uploadedFiles = [];
+  state.sampleDatasetLoaded = null;
+  state.hasUploadedValidData = false;
+  state.parsedStatementData = null;
+
+  const fileInput = document.getElementById('statementFileInput');
+  if (fileInput) fileInput.value = '';
+
+  const hub = document.getElementById('multimodalParserResultsHub');
+  if (hub) hub.style.display = 'none';
+
+  const exactBtn = document.getElementById('calculateExactBtn');
+  if (exactBtn) exactBtn.setAttribute('disabled', 'true');
+
+  renderUploadedFilesList();
+  updateEstimateCalculations();
+}
+
+async function removeUploadedFile(index) {
+  if (!state.uploadedFiles || index < 0 || index >= state.uploadedFiles.length) return;
+  state.uploadedFiles.splice(index, 1);
+
+  if (state.uploadedFiles.length === 0) {
+    clearAllUploadedFiles();
+  } else {
+    renderUploadedFilesList();
+    await parseUploadedFilesWithMultimodalLLM(state.uploadedFiles);
+  }
 }
 
 function loadSampleDataset(datasetKey) {

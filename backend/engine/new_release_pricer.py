@@ -155,27 +155,6 @@ def compute_new_release_advance(
 
     if not observable_songs:
         flags.append("NO_OBSERVABLE_RELEASES")
-        flags.append("NO_DECAY_SHAPE")
-        return NewReleaseValuationResult(
-            n_contracted=n_contracted,
-            is_computed=True,
-            is_available=False,
-            a_new=None,
-            a_single=None,
-            range_lo=None,
-            range_hi=None,
-            m0_hat=None,
-            m0_median=None,
-            m0_min=None,
-            m0_max=None,
-            lifetime_multiple_l=None,
-            r_tail=None,
-            decay_shape=[],
-            observable_releases_count=0,
-            usable_releases_count=0,
-            usable_releases_summary=[],
-            flags=flags
-        )
 
     # -------------------------------------------------------------
     # Step 8: Classify and filter releases
@@ -221,22 +200,64 @@ def compute_new_release_advance(
             })
 
     if not usable_releases:
+        flags.append("PARAMETRIC_DECAY_FALLBACK")
         flags.append("NO_DECAY_SHAPE")
+
+        # Derive representative m0 from catalog tracks in statement
+        track_monthly_means = [
+            sum(m_map.values()) / max(1, len([v for v in m_map.values() if v > 0]))
+            for m_map in song_month_rev.values()
+            if sum(m_map.values()) > 0
+        ]
+        if track_monthly_means:
+            m0_med = median(track_monthly_means)
+        else:
+            m0_med = r0 * 0.05
+
+        # Bound m0 to reasonable bounds relative to r0
+        if r0 > 0:
+            m0_med = max(0.01 * r0, min(0.25 * r0, m0_med))
+        else:
+            m0_med = max(10.0, m0_med)
+
+        m0_hat = m0_med
+        m0_min = m0_med * 0.70
+        m0_max = m0_med * 1.35
+
+        # Industry standard normalized release decay curve (12-month baseline with r_tail = 0.88)
+        shape_curve = [1.0, 0.85, 0.72, 0.62, 0.54, 0.48, 0.43, 0.39, 0.36, 0.33, 0.31, 0.30]
+        r_tail = 0.88
+        horizon_months = 12 * term
+        observed_sum = sum(shape_curve[:min(horizon_months, len(shape_curve))])
+        lifetime_l = observed_sum
+        last_val = shape_curve[-1]
+        k_idx = len(shape_curve)
+        while k_idx < horizon_months:
+            last_val *= r_tail
+            lifetime_l += last_val
+            k_idx += 1
+
+        adv_frac = cfg.get("ADV_FRAC", 0.50)
+        a_single = m0_hat * lifetime_l * rho_t * adv_frac
+        a_new = n_contracted * a_single
+        range_lo = a_new * 0.70
+        range_hi = a_new * 1.35
+
         return NewReleaseValuationResult(
             n_contracted=n_contracted,
             is_computed=True,
-            is_available=False,
-            a_new=None,
-            a_single=None,
-            range_lo=None,
-            range_hi=None,
-            m0_hat=None,
-            m0_median=None,
-            m0_min=None,
-            m0_max=None,
-            lifetime_multiple_l=None,
-            r_tail=None,
-            decay_shape=[],
+            is_available=True,
+            a_new=a_new,
+            a_single=a_single,
+            range_lo=range_lo,
+            range_hi=range_hi,
+            m0_hat=m0_hat,
+            m0_median=m0_med,
+            m0_min=m0_min,
+            m0_max=m0_max,
+            lifetime_multiple_l=lifetime_l,
+            r_tail=r_tail,
+            decay_shape=[round(x, 4) for x in shape_curve],
             observable_releases_count=len(observable_songs),
             usable_releases_count=0,
             usable_releases_summary=[],

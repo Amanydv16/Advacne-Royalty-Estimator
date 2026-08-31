@@ -1426,6 +1426,52 @@ main, .main-content {
   flex: 1;
 }
 
+.file-staging-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.file-staging-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mt-fg-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-clear-all {
+  color: #f87171 !important;
+  background: rgba(239, 68, 68, 0.08) !important;
+  border: 1px solid rgba(239, 68, 68, 0.2) !important;
+  font-size: 11px !important;
+  padding: 4px 10px !important;
+  border-radius: 4px !important;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+
+.btn-clear-all:hover {
+  background: rgba(239, 68, 68, 0.18) !important;
+  border-color: rgba(239, 68, 68, 0.4) !important;
+  color: #fca5a5 !important;
+}
+
+.file-pills-scroll-container {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 4px;
+}
+
 .empty-files-placeholder {
   display: flex;
   align-items: center;
@@ -1435,6 +1481,63 @@ main, .main-content {
   border-radius: var(--mt-radius-sm);
   color: var(--mt-fg-3);
   font-size: 12px;
+}
+
+.file-item-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--mt-bg-3);
+  border: 1px solid var(--mt-border);
+  border-radius: var(--mt-radius-sm);
+  font-size: 12px;
+  color: var(--mt-fg-1);
+  transition: background 0.15s ease;
+}
+
+.file-item-pill:hover {
+  background: var(--mt-bg-4);
+}
+
+.file-item-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 75%;
+}
+
+.file-size-tag {
+  font-size: 11px;
+  color: var(--mt-fg-3);
+  font-family: var(--mt-font-mono);
+  margin-left: 4px;
+}
+
+.file-remove-btn {
+  background: transparent;
+  border: none;
+  color: var(--mt-fg-3);
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.file-remove-btn:hover {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.file-remove-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .file-item-row {
