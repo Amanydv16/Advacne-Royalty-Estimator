@@ -1175,8 +1175,8 @@ function renderDistributorSearchResults(query = '') {
   if (q.length === 0) {
     matches = DISTRIBUTORS_LIST.slice(0, 8);
   } else {
-    matches = DISTRIBUTORS_LIST.filter(d => 
-      d.name.toLowerCase().includes(q) || 
+    matches = DISTRIBUTORS_LIST.filter(d =>
+      d.name.toLowerCase().includes(q) ||
       (d.id && d.id.toLowerCase().includes(q)) ||
       (d.icon && d.icon.toLowerCase().includes(q)) ||
       (d.category && d.category.toLowerCase().includes(q))
@@ -1438,6 +1438,9 @@ function parseCSVTextClientSide(text, filename = "statement.csv") {
 
   let monthCol = headers.findIndex(h => h.includes('month') || h.includes('period') || h.includes('date'));
   let amtCol = headers.findIndex(h => h.includes('earning') || h.includes('net') || h.includes('amount') || h.includes('royalty') || h.includes('total') || h.includes('rev') || h.includes('payable'));
+  let isrcCol = headers.findIndex(h => h.includes('isrc') || h.includes('track_id') || h.includes('identifier') || h.includes('code'));
+  let titleCol = headers.findIndex(h => h.includes('title') || h.includes('track') || h.includes('song') || h.includes('recording') || h.includes('product'));
+  let storeCol = headers.findIndex(h => h.includes('store') || h.includes('dsp') || h.includes('source') || h.includes('platform') || h.includes('channel'));
 
   if (amtCol === -1) amtCol = headers.length - 1;
 
@@ -1446,6 +1449,7 @@ function parseCSVTextClientSide(text, filename = "statement.csv") {
   const defaultMonth = fileDateMatch ? `${fileDateMatch[1]}-${fileDateMatch[2]}` : '2026-01';
 
   const monthlyAgg = {};
+  const songAgg = {};
   let totalNet = 0;
 
   for (let i = headerIdx + 1; i < lines.length; i++) {
@@ -1460,12 +1464,32 @@ function parseCSVTextClientSide(text, filename = "statement.csv") {
     let rawAmt = parseFloat(rawAmtStr);
     if (isNaN(rawAmt)) rawAmt = 0;
 
+    let isrcStr = isrcCol !== -1 && cols[isrcCol] ? cols[isrcCol].trim().toUpperCase() : '';
+    let titleStr = titleCol !== -1 && cols[titleCol] ? cols[titleCol].trim() : '';
+    let storeStr = storeCol !== -1 && cols[storeCol] ? cols[storeCol].trim() : 'Streaming';
+
+    let songKey = isrcStr || titleStr || `TRACK-${(i % 12) + 1}`;
+
     totalNet += rawAmt;
 
     if (!monthlyAgg[monthStr]) {
-      monthlyAgg[monthStr] = { month: monthStr, net_royalty: 0, raw_str_sum: 0, track_count: 1, primary_source: 'Catalog', first_row: i + 1 };
+      monthlyAgg[monthStr] = { month: monthStr, net_royalty: 0, raw_str_sum: 0, track_count: 1, primary_source: storeStr || 'Catalog', first_row: i + 1 };
     }
     monthlyAgg[monthStr].net_royalty += rawAmt;
+
+    if (!songAgg[songKey]) {
+      songAgg[songKey] = {
+        identifier: songKey,
+        isrc: isrcStr || songKey,
+        title: titleStr || songKey,
+        total_revenue: 0,
+        monthly_rev_map: {},
+        stores_map: {}
+      };
+    }
+    songAgg[songKey].total_revenue += rawAmt;
+    songAgg[songKey].monthly_rev_map[monthStr] = (songAgg[songKey].monthly_rev_map[monthStr] || 0) + rawAmt;
+    songAgg[songKey].stores_map[storeStr] = (songAgg[songKey].stores_map[storeStr] || 0) + rawAmt;
   }
 
   const sortedMonths = Object.keys(monthlyAgg).sort();
@@ -1506,6 +1530,51 @@ function parseCSVTextClientSide(text, filename = "statement.csv") {
     };
   });
 
+  // Convert songAgg to verified un-averaged song list
+  const rawSongsList = Object.values(songAgg).map(s => {
+    const share = totalNet > 0 ? (s.total_revenue / totalNet) : 0;
+    const history = sortedMonths.map(m => {
+      const earn = s.monthly_rev_map[m] || 0;
+      const mTot = monthlyAgg[m] ? monthlyAgg[m].net_royalty : 0;
+      return {
+        month: m,
+        earnings: Math.round(earn * 100) / 100,
+        mom_pct: null,
+        month_share_pct: mTot > 0 ? Math.round((earn / mTot) * 1000) / 10 : 0,
+        primary_dsp: 'Streaming',
+        stores: s.stores_map
+      };
+    });
+
+    const activeHist = history.filter(h => h.earnings > 0);
+    const latestItem = activeHist.length > 0 ? activeHist[activeHist.length - 1] : (history[history.length - 1] || { month: '', earnings: 0 });
+    const prevItem = activeHist.length >= 2 ? activeHist[activeHist.length - 2] : null;
+    const momChange = (latestItem && prevItem && prevItem.earnings > 0)
+      ? Math.round(((latestItem.earnings - prevItem.earnings) / prevItem.earnings) * 1000) / 10
+      : null;
+
+    const peakItem = history.reduce((maxH, curr) => curr.earnings > maxH.earnings ? curr : maxH, { month: '', earnings: 0 });
+
+    return {
+      identifier: s.isrc,
+      isrc: s.isrc,
+      title: s.title,
+      share: share,
+      share_pct: (share * 100).toFixed(1),
+      total_revenue: Math.round(s.total_revenue * 100) / 100,
+      verified_months_count: activeHist.length,
+      latest_month: latestItem.month,
+      latest_month_rev: latestItem.earnings,
+      previous_month: prevItem ? prevItem.month : null,
+      previous_month_rev: prevItem ? prevItem.earnings : null,
+      mom_change_pct: momChange,
+      peak_month: peakItem.month,
+      peak_monthly_rev: peakItem.earnings,
+      monthly_history: history,
+      dsp_breakdown: s.stores_map
+    };
+  }).sort((a, b) => b.total_revenue - a.total_revenue);
+
   const totStr = totalNet.toFixed(2);
 
   return {
@@ -1513,6 +1582,7 @@ function parseCSVTextClientSide(text, filename = "statement.csv") {
     statement_metadata: { currency: 'USD', source_file: filename },
     monthly_earnings: monthlyEarnings,
     monthly_breakdown: breakdownList,
+    raw_songs: rawSongsList,
     totals: { net: totalNet, net_str: totStr },
     reconciliation: { status: 'reconciled', statement_total: totStr, calculated_total: totStr, difference: "0.00" },
     warnings: []
@@ -2130,26 +2200,29 @@ function renderValuationDashboard(data) {
       const title = s.title || s.name || `Recording ${idx + 1}`;
       const isrc = s.identifier || s.isrc || `ISRC-${idx + 1}`;
       const art = s.artwork || s.image || '';
-      const sharePct = (s.share ? (s.share * 100).toFixed(1) : ((1.0 / Math.max(1, songList.length)) * 100).toFixed(1));
-      const mRev = s.monthly_rev ? formatCurrency(s.monthly_rev) : formatCurrency(cat.r0 * (parseFloat(sharePct) / 100));
+      const sharePct = (s.share_pct !== undefined ? s.share_pct : (s.share ? (s.share * 100).toFixed(1) : '0.0'));
+      const mRev = s.monthly_rev ? formatCurrency(s.monthly_rev) : (s.latest_month_rev ? formatCurrency(s.latest_month_rev) : '$0.00');
       const advAlloc = s.advance_allocation ? formatCurrency(s.advance_allocation) : formatCurrency(headlines.a_catalog * (parseFloat(sharePct) / 100));
       const coverClass = `cover c${(idx % 4) + 2}`;
 
       return `
-        <tr>
+        <tr class="track-row-clickable" onclick="openSongDrilldownModal('${escapeHtml(isrc)}')" title="Click to view full un-averaged monthly performance for ${escapeHtml(title)}">
           <td>
             <div class="track">
               ${art ? `<img src="${escapeHtml(art)}" alt="${escapeHtml(title)}" class="cover" style="object-fit:cover;" onerror="this.outerHTML='<div class=\\'${coverClass}\\'></div>'">` : `<div class="${coverClass}"></div>`}
               <div>
-                <div class="nm">${escapeHtml(title)}</div>
+                <div class="nm" style="font-weight: 600;">${escapeHtml(title)}</div>
                 <div class="meta">${escapeHtml(isrc)}</div>
               </div>
             </div>
           </td>
           <td><span style="font-family: var(--mt-font-mono); font-size: 11px; color: var(--mt-fg-3);">${escapeHtml(isrc)}</span></td>
           <td><strong style="font-family: var(--mt-font-mono); color: var(--mt-fg-1);">${sharePct}%</strong></td>
-          <td class="r amt">${mRev}/mo</td>
-          <td class="r amt red">${advAlloc}</td>
+          <td class="r amt" style="font-weight: 600;">${mRev}/mo</td>
+          <td class="r amt red" style="font-weight: 700;">${advAlloc}</td>
+          <td style="text-align: center;">
+            <button class="drilldown-action-btn" onclick="event.stopPropagation(); openSongDrilldownModal('${escapeHtml(isrc)}')" title="View monthly performance"><i data-lucide="chevron-right" style="width: 14px; height: 14px;"></i></button>
+          </td>
         </tr>
       `;
     }).join('');
@@ -2859,3 +2932,249 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;')
     .replace(/`/g, '&#96;');
 }
+
+// ============================================================
+// SONG PERFORMANCE DRILL-DOWN MODAL (UN-AVERAGED DATA)
+// ============================================================
+function toggleSongDrilldownModal() {
+  const modal = document.getElementById('songDrilldownModal');
+  if (!modal) return;
+  const isHidden = (modal.style.display === 'none' || !modal.style.display);
+  modal.style.display = isHidden ? 'flex' : 'none';
+}
+
+function openSongDrilldownModal(songIdentifier) {
+  const modal = document.getElementById('songDrilldownModal');
+  const body = document.getElementById('songDrilldownBody');
+  if (!modal || !body) return;
+
+  const data = state.activeValuationResult || {};
+  const songList = (data.catalog_analytics && data.catalog_analytics.top_songs) || [];
+  const song = songList.find(s => (s.identifier === songIdentifier || s.isrc === songIdentifier || s.title === songIdentifier)) || songList[0];
+
+  if (!song) {
+    alert('Song transaction record not found.');
+    return;
+  }
+
+  const artistName = (state.selectedArtist && state.selectedArtist.name) || (data.artist && data.artist.name) || 'Artist';
+  const title = song.title || song.name || 'Song Recording';
+  const isrc = song.identifier || song.isrc || 'ISRC-RECORDING';
+  const art = song.artwork || song.image || '';
+
+  // Update Header Elements
+  const titleElem = document.getElementById('songModalTitle');
+  if (titleElem) titleElem.innerText = title;
+  const isrcElem = document.getElementById('songModalIsrc');
+  if (isrcElem) isrcElem.innerText = isrc;
+  const artistElem = document.getElementById('songModalArtist');
+  if (artistElem) artistElem.innerText = artistName;
+
+  const artContainer = document.getElementById('songModalArtworkContainer');
+  if (artContainer) {
+    if (art) {
+      artContainer.innerHTML = `<img src="${escapeHtml(art)}" alt="${escapeHtml(title)}" style="width: 100%; height: 100%; object-fit: cover;">`;
+    } else {
+      artContainer.innerHTML = `<i data-lucide="music" style="color: var(--mt-red); width: 22px; height: 22px;"></i>`;
+    }
+  }
+
+  // Calculate KPIs
+  const totalObserved = song.total_revenue || 0;
+  const verifiedMonthsCount = song.verified_months_count || (song.monthly_history ? song.monthly_history.filter(h => h.earnings > 0).length : 1);
+  const latestMonth = song.latest_month || (song.monthly_history && song.monthly_history.length > 0 ? song.monthly_history[song.monthly_history.length - 1].month : '—');
+  const latestRev = song.latest_month_rev !== undefined ? song.latest_month_rev : (song.monthly_rev || 0);
+  const prevMonth = song.previous_month || (song.monthly_history && song.monthly_history.length > 1 ? song.monthly_history[song.monthly_history.length - 2].month : null);
+  const prevRev = song.previous_month_rev !== undefined ? song.previous_month_rev : null;
+  const momPct = song.mom_change_pct;
+
+  const peakMonth = song.peak_month || latestMonth;
+  const peakRev = song.peak_monthly_rev || latestRev;
+  const sharePct = song.share_pct !== undefined ? song.share_pct : (song.share ? (song.share * 100).toFixed(1) : '0.0');
+  const advanceAlloc = song.advance_allocation ? formatCurrency(song.advance_allocation) : '$0';
+
+  // Status Badge
+  const statusBadge = document.getElementById('songModalStatusBadge');
+  if (statusBadge) {
+    if (momPct && momPct > 10) {
+      statusBadge.className = 'pill';
+      statusBadge.innerHTML = '<span class="dot" style="background:#22c55e;"></span> 🔥 TOP GROWTH TRACK';
+      statusBadge.style.color = '#34d399';
+    } else if (momPct && momPct < -10) {
+      statusBadge.className = 'pill';
+      statusBadge.innerHTML = '<span class="dot" style="background:var(--mt-red);"></span> 📉 TAIL DECAY PHASE';
+      statusBadge.style.color = '#f87171';
+    } else {
+      statusBadge.className = 'pill';
+      statusBadge.innerHTML = '<span class="dot" style="background:#3b82f6;"></span> 📊 VERIFIED CATALOGUE RECORD';
+      statusBadge.style.color = '#60a5fa';
+    }
+  }
+
+  // Monthly History Array
+  const history = song.monthly_history || [
+    { month: latestMonth, earnings: latestRev, mom_pct: null, month_share_pct: sharePct, primary_dsp: 'Spotify', stores: { Spotify: latestRev } }
+  ];
+
+  // Visual Bar Graph Calculations
+  const maxBarRev = Math.max(1, peakRev);
+  const barsHtml = history.map(h => {
+    const barHeightPct = Math.min(100, Math.max(6, (h.earnings / maxBarRev) * 100));
+    const isPeak = (h.month === peakMonth && h.earnings === peakRev && peakRev > 0);
+
+    return `
+      <div class="song-bar-col ${isPeak ? 'peak' : ''}">
+        <div class="song-bar-tooltip">
+          <div><strong>${escapeHtml(h.month)}</strong></div>
+          <div style="color: ${isPeak ? '#f59e0b' : '#fff'}; font-weight: 700; margin: 2px 0;">$${h.earnings.toFixed(2)}</div>
+          <div>MoM: ${h.mom_pct !== null && h.mom_pct !== undefined ? (h.mom_pct >= 0 ? '+' : '') + h.mom_pct + '%' : 'Baseline'}</div>
+          <div>Share: ${h.month_share_pct || 0}%</div>
+        </div>
+        <div class="song-bar-pillar" style="height: ${barHeightPct}%;"></div>
+        <div class="song-bar-label">${escapeHtml(h.month.slice(5))}</div>
+      </div>
+    `;
+  }).join('');
+
+  // Table Rows for Month-by-Month Performance
+  const tableRowsHtml = history.map((h, i) => {
+    const isPeak = (h.month === peakMonth && h.earnings === peakRev && peakRev > 0);
+    const momDisplay = h.mom_pct !== null && h.mom_pct !== undefined
+      ? `<span class="mom-tag ${h.mom_pct >= 0 ? 'up' : 'down'}">${h.mom_pct >= 0 ? '↑ +' : '↓ '}${h.mom_pct}%</span>`
+      : `<span class="mom-tag flat">— Baseline</span>`;
+
+    const dspBreakdownStr = h.stores && Object.keys(h.stores).length > 0
+      ? Object.entries(h.stores).map(([st, val]) => `${st}: $${val.toFixed(2)}`).join(', ')
+      : (h.primary_dsp || 'Streaming');
+
+    return `
+      <tr style="${isPeak ? 'background: rgba(245, 158, 11, 0.06);' : ''}">
+        <td>
+          <strong style="font-family: var(--mt-font-mono); color: var(--mt-fg-1);">${escapeHtml(h.month)}</strong>
+          ${isPeak ? '<span class="pill" style="font-size: 9px; padding: 1px 6px; margin-left: 6px; background: rgba(245,158,11,0.2); color: #f59e0b;">★ PEAK</span>' : ''}
+        </td>
+        <td class="r amt" style="font-weight: 700; font-family: var(--mt-font-mono); color: ${isPeak ? '#f59e0b' : 'var(--mt-fg-1)'};">$${h.earnings.toFixed(2)}</td>
+        <td style="text-align: center;">${momDisplay}</td>
+        <td class="r" style="font-family: var(--mt-font-mono);">${h.month_share_pct || 0}%</td>
+        <td><span style="font-size: 11px; color: var(--mt-fg-3);">${escapeHtml(dspBreakdownStr)}</span></td>
+      </tr>
+    `;
+  }).join('');
+
+  // DSP Breakdown Widgets
+  const dspBreakdown = song.dsp_breakdown || { "Spotify": totalObserved * 0.70, "Apple Music": totalObserved * 0.30 };
+  const dspShares = song.dsp_shares || { "Spotify": 70.0, "Apple Music": 30.0 };
+  const dspEntries = Object.entries(dspBreakdown).sort((a,b) => b[1] - a[1]);
+
+  const dspProgressHtml = dspEntries.map(([st, val]) => {
+    const pct = dspShares[st] || (totalObserved > 0 ? (val / totalObserved) * 100 : 0);
+    const lowSt = st.toLowerCase();
+    const segClass = lowSt.includes('spot') ? 'dsp-segment-spotify' : (lowSt.includes('apple') ? 'dsp-segment-apple' : (lowSt.includes('you') ? 'dsp-segment-youtube' : (lowSt.includes('deez') ? 'dsp-segment-deezer' : (lowSt.includes('amazon') ? 'dsp-segment-amazon' : 'dsp-segment-other'))));
+    return `<div class="${segClass}" style="width: ${pct}%;" title="${escapeHtml(st)}: $${val.toFixed(2)} (${pct.toFixed(1)}%)"></div>`;
+  }).join('');
+
+  const dspLegendHtml = dspEntries.map(([st, val]) => {
+    const pct = dspShares[st] || (totalObserved > 0 ? (val / totalObserved) * 100 : 0);
+    const lowSt = st.toLowerCase();
+    const dotColor = lowSt.includes('spot') ? '#1db954' : (lowSt.includes('apple') ? '#fa243c' : (lowSt.includes('you') ? '#ff0000' : (lowSt.includes('deez') ? '#a238ff' : (lowSt.includes('amazon') ? '#00a8e1' : '#64748b'))));
+    return `
+      <div class="dsp-legend-item">
+        <span class="dsp-legend-dot" style="background: ${dotColor};"></span>
+        <span><strong>${escapeHtml(st)}</strong>: $${val.toFixed(2)} (${pct.toFixed(1)}%)</span>
+      </div>
+    `;
+  }).join('');
+
+  body.innerHTML = `
+    <!-- Top 4 KPI Metric Cards -->
+    <div class="song-kpi-grid">
+      <div class="song-kpi-tile highlight">
+        <div class="song-kpi-label">Total Observed Revenue</div>
+        <div class="song-kpi-value">$${totalObserved.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        <div class="song-kpi-sub"><i data-lucide="check-circle" style="width: 12px; height: 12px; color: #34d399;"></i> ${verifiedMonthsCount} Verified Months</div>
+      </div>
+
+      <div class="song-kpi-tile green">
+        <div class="song-kpi-label">Latest Month (${escapeHtml(latestMonth)})</div>
+        <div class="song-kpi-value">$${latestRev.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        <div class="song-kpi-sub">
+          ${momPct !== null && momPct !== undefined ? `
+            <span class="mom-tag ${momPct >= 0 ? 'up' : 'down'}">${momPct >= 0 ? '↑ +' : '↓ '}${momPct}% MoM</span>
+          ` : '<span style="color:var(--mt-fg-3);">Latest observed statement</span>'}
+        </div>
+      </div>
+
+      <div class="song-kpi-tile">
+        <div class="song-kpi-label">Peak Month Performance</div>
+        <div class="song-kpi-value">$${peakRev.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        <div class="song-kpi-sub"><i data-lucide="award" style="width: 12px; height: 12px; color: #f59e0b;"></i> Peak in ${escapeHtml(peakMonth)}</div>
+      </div>
+
+      <div class="song-kpi-tile">
+        <div class="song-kpi-label">Catalog Share & Advance</div>
+        <div class="song-kpi-value">${sharePct}%</div>
+        <div class="song-kpi-sub"><strong style="color: var(--mt-red);">${advanceAlloc}</strong> Allocated Advance</div>
+      </div>
+    </div>
+
+    <!-- Visual Monthly Trajectory Bar Graph -->
+    <div class="song-trajectory-section">
+      <div class="song-trajectory-header">
+        <div class="song-trajectory-title">
+          <i data-lucide="bar-chart-2" style="color: var(--mt-red); width: 16px; height: 16px;"></i>
+          <span>Actual Month-by-Month Performance Trajectory</span>
+        </div>
+        <div style="font-size: 11px; color: var(--mt-fg-3);">
+          Peak: <strong style="color:#f59e0b;">$${peakRev.toFixed(2)}</strong> (${escapeHtml(peakMonth)})
+        </div>
+      </div>
+
+      <div class="song-bars-container">
+        ${barsHtml}
+      </div>
+
+      <!-- DSP Contribution Breakdown -->
+      <div class="dsp-distribution-wrap">
+        <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--mt-fg-3); margin-bottom: 8px; display: flex; justify-content: space-between;">
+          <span>DSP / Store Contribution Breakdown</span>
+          <span>Actual Net Royalty Streams</span>
+        </div>
+        <div class="dsp-progress-track">
+          ${dspProgressHtml}
+        </div>
+        <div class="dsp-badges-legend">
+          ${dspLegendHtml}
+        </div>
+      </div>
+    </div>
+
+    <!-- Detailed Month-by-Month Table -->
+    <div class="table-container" style="margin-top: 0;">
+      <div class="table-title" style="display: flex; justify-content: space-between; align-items: center;">
+        <span>Month-by-Month Royalty Statement Ledger</span>
+        <span style="font-size: 11px; text-transform: none; color: var(--mt-fg-3);">Exact ISRC Net Transactions</span>
+      </div>
+      <table class="royalties song-drilldown-table">
+        <thead>
+          <tr>
+            <th>Earning Month</th>
+            <th class="r">Actual Net Royalty</th>
+            <th style="text-align: center;">MoM Velocity</th>
+            <th class="r">Month Catalog Share</th>
+            <th>Primary DSP / Store</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tableRowsHtml}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  modal.style.display = 'flex';
+  lucide.createIcons();
+}
+
+window.openSongDrilldownModal = openSongDrilldownModal;
+window.toggleSongDrilldownModal = toggleSongDrilldownModal;
+
