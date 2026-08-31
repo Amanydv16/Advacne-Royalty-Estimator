@@ -99,9 +99,24 @@ def parse_month_string(raw_val: Any) -> Optional[str]:
             if y_match:
                 return f"{int(y_match.group(1)):04d}-{m_num:02d}"
             # Look for 2-digit year '25 or -25
-            y2_match = re.search(r"[-/ '\"](\d{2})\b", val_str)
+            y2_match = re.search(r"[-/ '\"_](\d{2})\b", val_str)
             if y2_match:
                 return f"20{int(y2_match.group(1)):02d}-{m_num:02d}"
+
+    # Search anywhere in string for YYYY-MM (e.g. royalties_2025-01.csv, report_2025_03.csv)
+    m = re.search(r"(?:^|[^0-9])(20\d{2})[-/._](0[1-9]|1[0-2])(?:[^0-9]|$)", val_str)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+
+    # Search anywhere in string for YYYYMM (e.g. report_202501.csv)
+    m = re.search(r"(?:^|[^0-9])(20\d{2})(0[1-9]|1[0-2])(?:[^0-9]|$)", val_str)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+
+    # Search anywhere in string for MM-YYYY
+    m = re.search(r"(?:^|[^0-9])(0[1-9]|1[0-2])[-/._](20\d{2})(?:[^0-9]|$)", val_str)
+    if m:
+        return f"{m.group(2)}-{m.group(1)}"
 
     return None
 
@@ -379,10 +394,14 @@ def parse_csv_royalty_statement(
                         break
 
         if not month_str:
+            # Check filename for embedded date (e.g. 2025-01.csv, royalties_jan2025.csv)
+            month_str = parse_month_string(filename)
+
+        if not month_str:
             month_str = "2026-01"
             warnings.append({
                 "row": row_num,
-                "reason": f"Date could not be determined from row; assigned to baseline month {month_str}."
+                "reason": f"Date could not be determined from row or filename; assigned to baseline month {month_str}."
             })
 
         # Apply gross fee if applicable
@@ -403,12 +422,16 @@ def parse_csv_royalty_statement(
         monthly_aggregation[month_str]["earnings_decimal"] += amt_decimal
         monthly_aggregation[month_str]["row_count"] += 1
 
-        store_name = str(row.get(store_col, "Unknown")).strip() if store_col else "Unknown"
-        if not store_name or store_name.lower() == "none":
-            store_name = "Unknown"
+        store_name = str(row.get(store_col, "Catalog")).strip() if store_col else "Catalog"
+        if not store_name or store_name.lower() in ("none", "unknown", "null"):
+            store_name = "Catalog"
 
         track_name = str(row.get(title_col, "Untitled Track")).strip() if title_col else "Untitled Track"
         isrc_val = str(row.get(isrc_col, "")).strip() if isrc_col else ""
+        if not isrc_val:
+            # Generate deterministic track key from track name so decay tracks across monthly files
+            clean_t = re.sub(r"[^a-zA-Z0-9]", "", track_name).upper()
+            isrc_val = f"TRK_{abs(hash(clean_t)) & 0xffffff:06x}" if clean_t else "TRK_DEFAULT"
 
         monthly_aggregation[month_str]["tracks_set"].add(isrc_val or track_name)
         monthly_aggregation[month_str]["stores"][store_name] = monthly_aggregation[month_str]["stores"].get(store_name, Decimal("0.0")) + amt_decimal

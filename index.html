@@ -16,7 +16,7 @@
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   
-  <link rel="stylesheet" href="styles.css?v=4.0">
+  <link rel="stylesheet" href="styles.css?v=4.1">
 </head>
 
 <body>
@@ -250,7 +250,7 @@
                       <span id="parserStatusBadge" class="pill"><span class="dot"></span> PARSED</span>
                     </div>
 
-                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px;">
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px;">
                       <div style="background: var(--mt-bg-4); padding: 10px; border-radius: 4px;">
                         <div style="font-size: 10px; text-transform: uppercase; color: var(--mt-fg-3); font-weight: 600;">Currency</div>
                         <div style="font-size: 14px; font-weight: 700; font-family: var(--mt-font-mono); color: var(--mt-fg-1); margin-top: 2px;" id="parserMetaCurrency">USD</div>
@@ -258,6 +258,10 @@
                       <div style="background: var(--mt-bg-4); padding: 10px; border-radius: 4px;">
                         <div style="font-size: 10px; text-transform: uppercase; color: var(--mt-fg-3); font-weight: 600;">Calculated Net</div>
                         <div style="font-size: 14px; font-weight: 700; font-family: var(--mt-font-mono); color: var(--mt-red); margin-top: 2px;" id="parserCalculatedNet">$0.00</div>
+                      </div>
+                      <div style="background: var(--mt-bg-4); padding: 10px; border-radius: 4px;">
+                        <div style="font-size: 10px; text-transform: uppercase; color: var(--mt-fg-3); font-weight: 600;">Trailing Median (R₀)</div>
+                        <div style="font-size: 14px; font-weight: 700; font-family: var(--mt-font-mono); color: #34d399; margin-top: 2px;" id="parserTrailingMedian">$0.00</div>
                       </div>
                       <div style="background: var(--mt-bg-4); padding: 10px; border-radius: 4px;">
                         <div style="font-size: 10px; text-transform: uppercase; color: var(--mt-fg-3); font-weight: 600;">Status</div>
@@ -327,9 +331,8 @@
 
                 <!-- Pre-Recoupment Split -->
                 <div class="deal-option-block">
-                  <label class="deal-option-label" style="margin-bottom: 8px;">Pre-Recoupment Split (Investor / Artist)</label>
+                  <label class="deal-option-label" style="margin-bottom: 8px;">Pre-Recoupment Split (Monetunes / Artist)</label>
                   <div class="segment-button-group" id="preRecoupSplitGroup">
-                    <button class="segment-btn" data-rho="auto" onclick="selectPreRecoupSplit('auto', this)">AUTO</button>
                     <button class="segment-btn" data-rho="0.40" onclick="selectPreRecoupSplit(0.40, this)">40/60</button>
                     <button class="segment-btn" data-rho="0.45" onclick="selectPreRecoupSplit(0.45, this)">45/55</button>
                     <button class="segment-btn active" data-rho="0.50" onclick="selectPreRecoupSplit(0.50, this)">50/50</button>
@@ -450,13 +453,14 @@
             <!-- Analytics Two-Column Grid -->
             <div class="analytics-two-col-grid">
 
-              <!-- Left Column: Catalogue Risk & Run-Rate -->
+              <!-- Left Column: Catalogue Risk, Concentration & Multipliers -->
               <div class="panel col-panel">
-                <h3 class="panel-section-title"><i data-lucide="bar-chart-2" style="color: var(--mt-red);"></i> Catalogue Risk & Run-Rate</h3>
+                <h3 class="panel-section-title"><i data-lucide="bar-chart-2" style="color: var(--mt-red);"></i> Catalogue Risk & Concentration Diagnostics</h3>
 
+                <!-- Primary Run-Rate & Risk Row -->
                 <div class="metric-tiles-row">
                   <div class="metric-tile">
-                    <div class="metric-label">Trailing-3 Median R0</div>
+                    <div class="metric-label">Trailing-3 Median R₀</div>
                     <div class="metric-value" id="resR0Val">$0</div>
                     <div class="metric-foot" id="resR0LastFoot">Last month: $0</div>
                   </div>
@@ -466,9 +470,54 @@
                     <div class="metric-foot" id="resGiniFoot">Top-1: 0% | Top-5: 0%</div>
                   </div>
                   <div class="metric-tile">
-                    <div class="metric-label">Risk Discount</div>
-                    <div class="metric-value" id="resRiskDiscVal">0.0%</div>
+                    <div class="metric-label">Net Risk Discount</div>
+                    <div class="metric-value" id="resRiskDiscVal" style="color: #f87171;">0.0%</div>
                     <div class="metric-foot" id="resDecayCovFoot">Decay cov: 0%</div>
+                  </div>
+                </div>
+
+                <!-- Actuarial Risk Factor Decomposition -->
+                <div style="margin-top: 14px; margin-bottom: 6px;">
+                  <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--mt-fg-2); display: flex; align-items: center; gap: 6px;">
+                    <i data-lucide="shield-alert" style="width: 13px; height: 13px; color: var(--mt-red);"></i> Actuarial Risk Haircuts Breakdown
+                  </div>
+                  <div class="risk-subgrid">
+                    <div class="risk-subcard">
+                      <div class="risk-subcard-title">Concentration (d_conc)</div>
+                      <div class="risk-subcard-val" id="resDConcVal">0.0%</div>
+                      <div class="risk-subcard-foot">Threshold C* = 0.55</div>
+                    </div>
+                    <div class="risk-subcard">
+                      <div class="risk-subcard-title">Decay Rate (d_decay)</div>
+                      <div class="risk-subcard-val" id="resDDecayVal">0.0%</div>
+                      <div class="risk-subcard-foot" id="resDecaySub">D_ref = 10%/mo</div>
+                    </div>
+                    <div class="risk-subcard">
+                      <div class="risk-subcard-title">Catalogue Age (d_age)</div>
+                      <div class="risk-subcard-val" id="resDAgeVal">0.0%</div>
+                      <div class="risk-subcard-foot">Safe @ 48+ mos</div>
+                    </div>
+                    <div class="risk-subcard">
+                      <div class="risk-subcard-title">Fanbase / Stream (d_stream)</div>
+                      <div class="risk-subcard-val" id="resDStreamVal">0.0%</div>
+                      <div class="risk-subcard-foot">Trajectory score</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Multiple & Velocity Details -->
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; background: var(--mt-bg-3); border: 1px solid var(--mt-border); border-radius: var(--mt-radius-sm); padding: 10px;">
+                  <div>
+                    <div style="font-size: 9px; text-transform: uppercase; color: var(--mt-fg-3); font-weight: 600;">Base Multiple K_base</div>
+                    <div style="font-size: 13px; font-weight: 700; font-family: var(--mt-font-mono); color: var(--mt-fg-1); margin-top: 2px;" id="resKBaseVal">30.0x</div>
+                  </div>
+                  <div>
+                    <div style="font-size: 9px; text-transform: uppercase; color: var(--mt-fg-3); font-weight: 600;">Active Multiple K(T)</div>
+                    <div style="font-size: 13px; font-weight: 700; font-family: var(--mt-font-mono); color: #34d399; margin-top: 2px;" id="resKTVal">30.0x</div>
+                  </div>
+                  <div>
+                    <div style="font-size: 9px; text-transform: uppercase; color: var(--mt-fg-3); font-weight: 600;">Recoupment Velocity</div>
+                    <div style="font-size: 13px; font-weight: 700; font-family: var(--mt-font-mono); color: var(--mt-fg-1); margin-top: 2px;" id="resTTRDetailVal">5.0 Yrs</div>
                   </div>
                 </div>
 
@@ -602,7 +651,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=4.0"></script>
+  <script src="app.js?v=4.1"></script>
 </body>
 
 </html>

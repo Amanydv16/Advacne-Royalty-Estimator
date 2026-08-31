@@ -96,6 +96,13 @@ def compute_r0(
     
     r0 = median(window_values)
     r0_last = monthly_totals[usable_months[-1]]
+    
+    import logging
+    engine_logger = logging.getLogger("royalty_pipeline")
+    engine_logger.info(f"[VALUATION ENGINE] Canonical Usable Months ({len(usable_months)}): {usable_months}")
+    engine_logger.info(f"[VALUATION ENGINE] Trailing {r_win_actual}-Month Window: {window_months} -> Monthly Values: {[round(v, 2) for v in window_values]}")
+    engine_logger.info(f"[VALUATION ENGINE] Calculated Trailing Median R0 = ${r0:.2f} (Last Month R0_last = ${r0_last:.2f})")
+    
     return r0, r0_last, window_months
 
 

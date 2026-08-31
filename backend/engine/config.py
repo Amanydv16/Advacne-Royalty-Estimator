@@ -41,7 +41,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Ingestion & Windowing
     "PHI_PARTIAL": 0.25,    # Threshold for calling a trailing month partial
     "R_WIN": 3,             # Months in the R0 median window (1 for beatBread-strict, 3 for production)
-    "M_MIN": 6,             # Minimum usable months before pricing at all
+    "M_MIN": 1,             # Minimum usable months before pricing (flag SHORT_HISTORY if < 6)
     
     # Guardrails (not dials - stops absurd outputs)
     "RISK_MAX": 0.55,       # Guard: cap on total risk discount

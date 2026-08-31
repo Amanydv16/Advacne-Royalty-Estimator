@@ -1919,6 +1919,43 @@ input[type="range"]::-webkit-slider-thumb:hover {
   font-family: var(--mt-font-mono);
 }
 
+.risk-subgrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 12px 0 16px 0;
+}
+
+.risk-subcard {
+  background: var(--mt-bg-4);
+  border: 1px solid var(--mt-border);
+  border-radius: var(--mt-radius-sm);
+  padding: 10px;
+}
+
+.risk-subcard-title {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mt-fg-3);
+}
+
+.risk-subcard-val {
+  font-size: 14px;
+  font-weight: 700;
+  font-family: var(--mt-font-mono);
+  color: var(--mt-fg-1);
+  margin-top: 2px;
+}
+
+.risk-subcard-foot {
+  font-size: 9px;
+  color: var(--mt-fg-3);
+  margin-top: 2px;
+  font-family: var(--mt-font-mono);
+}
+
 /* System Flags */
 .flags-panel {
   padding: 20px 24px;

@@ -75,87 +75,36 @@ def apply_ingestion_rules(
     kept_feed = None
     rows_after_source: List[Dict[str, Any]] = []
 
-    # Check if all group names are years (e.g., "2024", "2025")
-    is_all_years = len(source_feeds_found) > 0 and all(
-        bool(re.match(r"^\d{4}$", str(k).strip())) for k in source_feeds_found
-    )
-
-    if len(groups) == 1 or is_all_years:
-        # Merge all
-        for r_list in groups.values():
-            rows_after_source.extend(r_list)
-        kept_feed = "merged_annual_feeds" if is_all_years else source_feeds_found[0]
-    else:
-        # Score each group = mean revenue over latest 3 months it reports
-        group_scores = {}
-        for g_name, g_rows in groups.items():
-            # Get months in this group
-            g_month_totals = defaultdict(float)
-            for r in g_rows:
-                g_month_totals[r["sale_month"]] += r["earnings_usd"]
-            sorted_m = sorted(g_month_totals.keys())
-            latest_3 = sorted_m[-3:] if len(sorted_m) >= 3 else sorted_m
-            score = sum(g_month_totals[m] for m in latest_3) / len(latest_3) if latest_3 else 0.0
-            group_scores[g_name] = score
-
-        # Keep highest-scoring group, drop the rest
-        best_group = max(group_scores.keys(), key=lambda k: group_scores[k])
-        kept_feed = best_group
-        rows_after_source = groups[best_group]
-        flags.append("MULTI_SOURCE_FEED")
+    # Merge all uploaded files/batches to build the complete monthly timeseries
+    for r_list in groups.values():
+        rows_after_source.extend(r_list)
+    kept_feed = "merged_statement_files" if len(groups) > 1 else (source_feeds_found[0] if source_feeds_found else "default")
 
     # -------------------------------------------------------------
-    # Rule 3(c): Exclude missing feeds
-    # If a store reported > 0 rows in earlier months and exactly 0 rows in the latest month,
-    # exclude that store from EVERY month.
-    # -------------------------------------------------------------
-    # Get all distinct months
-    all_months = sorted(list(set(r["sale_month"] for r in rows_after_source)))
-    excluded_stores: List[str] = []
-    
-    if len(all_months) >= 2:
-        latest_month = all_months[-1]
-        earlier_months = set(all_months[:-1])
-        
-        stores_in_earlier = set()
-        stores_in_latest = set()
-        for r in rows_after_source:
-            s_name = r.get("store", "Unknown")
-            if r["sale_month"] in earlier_months:
-                stores_in_earlier.add(s_name)
-            elif r["sale_month"] == latest_month:
-                stores_in_latest.add(s_name)
-
-        dropped_stores = stores_in_earlier - stores_in_latest
-        if dropped_stores:
-            excluded_stores = sorted(list(dropped_stores))
-            flags.append("MISSING_FEED_DETECTED")
-            rows_after_source = [r for r in rows_after_source if r.get("store", "Unknown") not in dropped_stores]
-
-    # Recompute monthly totals after store exclusions
-    monthly_totals_map = defaultdict(float)
-    for r in rows_after_source:
-        monthly_totals_map[r["sale_month"]] += r["earnings_usd"]
-
-    sorted_months = sorted(monthly_totals_map.keys())
-
-    # -------------------------------------------------------------
-    # Rule 3(b): Drop partial trailing months
-    # while len(months) >= 4:
+    # Rule 3(b): Drop partial trailing months FIRST
+    # Digital royalty statements for the most recent month often arrive incomplete
+    # (e.g. some DSPs on a 30-day reporting lag vs 60-90 days for others).
+    # Drop partial trailing months before feed continuity checks.
+    # while len(sorted_months) >= 4:
     #   ref = median(revenue of 3 months before last)
     #   if revenue(last month) < PHI_PARTIAL * ref:
     #       drop last month; raise PARTIAL_MONTH_EXCLUDED
     #   else: stop
     # -------------------------------------------------------------
+    initial_monthly_totals = defaultdict(float)
+    for r in rows_after_source:
+        initial_monthly_totals[r["sale_month"]] += r["earnings_usd"]
+
+    sorted_months = sorted(initial_monthly_totals.keys())
     phi_partial = cfg.get("PHI_PARTIAL", 0.25)
     dropped_months: List[str] = []
 
     while len(sorted_months) >= 4:
         last_m = sorted_months[-1]
         prior_3 = sorted_months[-4:-1]
-        ref = median([monthly_totals_map[m] for m in prior_3])
+        ref = median([initial_monthly_totals[m] for m in prior_3])
         
-        last_rev = monthly_totals_map[last_m]
+        last_rev = initial_monthly_totals[last_m]
         if ref > 0 and last_rev < phi_partial * ref:
             dropped_months.append(last_m)
             sorted_months.pop()
@@ -164,17 +113,65 @@ def apply_ingestion_rules(
         else:
             break
 
+    # Retain only rows belonging to valid non-partial months
+    rows_after_source = [r for r in rows_after_source if r["sale_month"] in sorted_months]
+
+    # -------------------------------------------------------------
+    # Rule 3(c): Exclude missing feeds on validated complete history
+    # If a recognized distributor/DSP platform reported > 0 in earlier months but stopped reporting
+    # in the latest month while other feeds continued, exclude that feed from all months.
+    # Safeguard: Do NOT exclude generic/file-based labels or drop months entirely.
+    # -------------------------------------------------------------
+    GENERIC_STORE_NAMES = {"unknown", "catalog", "streaming", "sales", "digital", "merged_statement_files", "default"}
+    excluded_stores: List[str] = []
+    
+    if len(sorted_months) >= 2:
+        latest_month = sorted_months[-1]
+        earlier_months = set(sorted_months[:-1])
+        
+        stores_in_earlier = set()
+        stores_in_latest = set()
+        for r in rows_after_source:
+            s_name = str(r.get("store", "Catalog")).strip()
+            # Skip generic labels and filename-derived stores
+            s_low = s_name.lower()
+            if s_low in GENERIC_STORE_NAMES or any(s_low.endswith(ext) for ext in [".csv", ".tsv", ".xlsx", ".pdf", ".txt", ".docx", ".json"]):
+                continue
+            if r["sale_month"] in earlier_months:
+                stores_in_earlier.add(s_name)
+            elif r["sale_month"] == latest_month:
+                stores_in_latest.add(s_name)
+
+        # Only drop if there are remaining valid stores in latest and dropping doesn't destroy entire months
+        if stores_in_latest and stores_in_earlier:
+            candidate_dropped = stores_in_earlier - stores_in_latest
+            # Check that dropping these stores does not completely delete any earlier month
+            if candidate_dropped:
+                safe_to_drop = True
+                for em in earlier_months:
+                    month_stores = set(str(r.get("store", "Catalog")).strip() for r in rows_after_source if r["sale_month"] == em)
+                    if month_stores.issubset(candidate_dropped):
+                        safe_to_drop = False
+                        break
+                
+                if safe_to_drop:
+                    excluded_stores = sorted(list(candidate_dropped))
+                    flags.append("MISSING_FEED_DETECTED")
+                    rows_after_source = [r for r in rows_after_source if str(r.get("store", "Catalog")).strip() not in candidate_dropped]
+
+    # Final usable monthly totals
+    final_monthly_totals = defaultdict(float)
+    for r in rows_after_source:
+        final_monthly_totals[r["sale_month"]] += r["earnings_usd"]
+
     usable_months = sorted_months
     usable_rows = [r for r in rows_after_source if r["sale_month"] in usable_months]
-    
-    # Final usable monthly totals
-    final_monthly_totals = {m: monthly_totals_map[m] for m in usable_months}
     m_count = len(usable_months)
 
     # -------------------------------------------------------------
     # History Gates (Section 3.2)
     # -------------------------------------------------------------
-    m_min = cfg.get("M_MIN", 6)
+    m_min = cfg.get("M_MIN", 1)
     if m_count < m_min:
         flags.append("INSUFFICIENT_HISTORY")
         return IngestionResult(
@@ -187,14 +184,14 @@ def apply_ingestion_rules(
             kept_feed=kept_feed,
             flags=flags,
             is_priceable=False,
-            rejection_reason=f"Only {m_count} usable month(s) found. Minimum required is {m_min} months."
+            rejection_reason=f"No usable statement month(s) found."
         )
 
-    if m_count < 12:
-        flags.append("SHORT_HISTORY")
-
     if m_count < 6:
+        flags.append("SHORT_HISTORY")
         flags.append("DECAY_UNSTABLE")
+    elif m_count < 12:
+        flags.append("SHORT_HISTORY")
 
     return IngestionResult(
         usable_rows=usable_rows,

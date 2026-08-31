@@ -32,6 +32,7 @@ import math
 from backend.engine.config import DEFAULT_CONFIG
 from backend.engine.normalizer import parse_csv_or_tsv_content, detect_and_normalize_table
 from backend.engine.valuation_engine import ValuationEngine
+from backend.engine.aggregator import aggregate_parsed_statements
 
 
 
@@ -624,7 +625,62 @@ def generate_sample_rows_for_dataset(dataset_id: str, monthly_rev: float, artist
     return rows
 
 
+from backend.services.csv_royalty_parser import parse_csv_royalty_statement
 from backend.services.llm_parser import parse_royalty_statement, smart_parse_files
+from backend.services.royalty_statement_parser_service import parse_statement_with_skill, inspect_statement
+
+
+def parse_statement_hybrid(filename: str, content_bytes: bytes, f_dist: Optional[float] = None, is_gross: bool = False) -> Dict[str, Any]:
+    """
+    Parses statement bytes prioritizing deterministic CSV / skill parser
+    and falling back to multimodal LLM parser for messy/unstructured scans.
+    """
+    ext = os.path.splitext(filename)[1].lower()
+    
+    # 1. For CSV/TSV/TXT files, run deterministic high-precision CSV parser
+    if ext in (".csv", ".tsv", ".txt") or not ext:
+        for enc in ("utf-8", "utf-8-sig", "latin-1", "cp1252"):
+            try:
+                content_str = content_bytes.decode(enc)
+                csv_res = parse_csv_royalty_statement(content_str, filename=filename, f_dist=f_dist, is_gross=is_gross)
+                if csv_res.get("status") == "parsed" and len(csv_res.get("rows", [])) > 0:
+                    csv_res["parser_used"] = "deterministic_csv_parser"
+                    return csv_res
+            except Exception as e:
+                pass
+
+    # 2. For spreadsheets (XLSX) or skill-based parsing
+    try:
+        skill_res = parse_statement_with_skill(filename, content_bytes, f_dist=f_dist, is_gross=is_gross)
+        if skill_res.get("status") == "parsed" and len(skill_res.get("rows", [])) > 0:
+            return skill_res
+    except Exception as e:
+        print(f"[RoyaltyStatementParserSkill] Fallback triggered: {e}")
+
+    # 3. Multimodal LLM fallback for PDFs, scans, and unstructured documents
+    llm_res = parse_royalty_statement(filename, content_bytes, f_dist=f_dist, is_gross=is_gross)
+    llm_res["parser_used"] = "multimodal_llm"
+    return llm_res
+
+
+@app.post("/api/royalty/inspect")
+async def inspect_uploaded_statement(file: UploadFile = File(...)):
+    """
+    Inspect & profile statement structure (columns, sample rows, exact Decimal sums)
+    using inspect_source from royalty-statement-parser skill.
+    """
+    ext = os.path.splitext(file.filename)[1].lower()
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
+    try:
+        return inspect_statement(tmp_path)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 @app.post("/api/royalty/parse")
@@ -635,7 +691,7 @@ async def parse_royalty_file(
     distributor_fee_pct: Optional[Any] = Form(None)
 ):
     """
-    Multimodal Royalty Statement Parser Endpoint:
+    Royalty Statement Parser Endpoint:
     Accepts PDF, CSV, XLSX, DOCX, TXT, PNG/JPG statements, extracts normalized monthly breakdown,
     preserves currency & provenance, and calculates reconciliation.
     """
@@ -653,69 +709,40 @@ async def parse_royalty_file(
         raise HTTPException(status_code=400, detail="No file provided for parsing.")
 
     from decimal import Decimal
+    from backend.engine.aggregator import aggregate_parsed_statements
 
-    results = []
-    merged_rows = []
-    combined_warnings = []
-
+    # Stage 1: PARSER — extract each uploaded file into normalized statement results
+    parsed_results = []
     for f in target_files:
         content_bytes = await f.read()
-        res = parse_royalty_statement(f.filename, content_bytes, f_dist=f_dist, is_gross=is_gross)
-        results.append(res)
-        merged_rows.extend(res.get("rows", []))
-        combined_warnings.extend(res.get("warnings", []))
+        res = parse_statement_hybrid(f.filename, content_bytes, f_dist=f_dist, is_gross=is_gross)
+        parsed_results.append(res)
 
-    # Aggregate month-wise across all uploaded CSVs with exact Decimal math
-    combined_months_map = {}
-    total_combined_dec = Decimal("0.0")
-
-    for r in results:
-        for m in r.get("monthly_breakdown", []):
-            m_key = m["month"]
-            m_amt_dec = Decimal(m.get("earnings", str(m.get("net_royalty", 0.0))))
-            if m_key not in combined_months_map:
-                combined_months_map[m_key] = {
-                    "month": m_key,
-                    "earnings_dec": Decimal("0.0"),
-                    "currency": m.get("currency", "USD"),
-                    "track_count": 0,
-                    "primary_source": m.get("primary_source", "Streaming"),
-                    "sources": []
-                }
-            combined_months_map[m_key]["earnings_dec"] += m_amt_dec
-            combined_months_map[m_key]["track_count"] += m.get("track_count", 1)
-            combined_months_map[m_key]["sources"].extend(m.get("sources", []))
-            total_combined_dec += m_amt_dec
-
-    sorted_m_keys = sorted(combined_months_map.keys())
-    final_monthly_breakdown = [
-        {
-            "month": k,
-            "earnings": str(combined_months_map[k]["earnings_dec"]),
-            "net_royalty": float(combined_months_map[k]["earnings_dec"]),
-            "currency": combined_months_map[k]["currency"],
-            "track_count": combined_months_map[k]["track_count"],
-            "primary_source": combined_months_map[k]["primary_source"],
-            "sources": combined_months_map[k]["sources"]
-        }
-        for k in sorted_m_keys
-    ]
-
-    first_res = results[0] if results else {}
+    # Stage 2: MONTHLY AGGREGATOR — combine all parsed statements into canonical monthly series
+    first_res = parsed_results[0] if parsed_results else {}
     doc_currency = first_res.get("currency", "USD")
+    agg_res = aggregate_parsed_statements(parsed_results, default_currency=doc_currency)
+
+    final_monthly_breakdown = agg_res.canonical_series
+    sorted_m_keys = [m["month"] for m in final_monthly_breakdown]
+    total_combined_dec = agg_res.total_net_dec
 
     return {
         "status": "parsed",
+        "parser_used": first_res.get("parser_used", "deterministic_csv_parser"),
         "statement_metadata": {
             "artist": first_res.get("statement_metadata", {}).get("artist"),
             "label": first_res.get("statement_metadata", {}).get("label"),
             "period": f"{sorted_m_keys[0]} to {sorted_m_keys[-1]}" if sorted_m_keys else None,
-            "currency": doc_currency,
+            "currency": agg_res.currency,
             "source_file": ", ".join(f.filename for f in target_files if f.filename)
         },
         "monthly_breakdown": final_monthly_breakdown,
-        "currency": doc_currency,
+        "currency": agg_res.currency,
         "total_earnings": str(total_combined_dec),
+        "r0_median": agg_res.r0_median,
+        "r_median_full": agg_res.r_median_full,
+        "r0_window_months": agg_res.r0_window_months,
         "totals": {
             "gross": None,
             "net": float(total_combined_dec),
@@ -727,16 +754,17 @@ async def parse_royalty_file(
             "calculated_total": str(total_combined_dec),
             "difference": "0.00"
         },
-        "warnings": combined_warnings,
-        "rows": merged_rows,
+        "warnings": agg_res.warnings,
+        "rows": agg_res.combined_rows,
         "file_summaries": [
             {
                 "filename": r.get("statement_metadata", {}).get("source_file", "file"),
                 "status": r.get("status"),
+                "parser_used": r.get("parser_used", "deterministic_csv_parser"),
                 "row_count": len(r.get("rows", [])),
                 "calculated_total": r.get("total_earnings", "0.00")
             }
-            for r in results
+            for r in parsed_results
         ]
     }
 
@@ -794,20 +822,25 @@ async def evaluate_statements(
 
     f_dist = (distributor_fee_pct / 100.0) if (distributor_fee_pct and is_gross) else None
 
-    # 1. Process uploaded files via Multimodal Parser
+    # 1. Process uploaded files: Stage 1 (PARSER) -> Stage 2 (MONTHLY AGGREGATOR)
     if files and len(files) > 0 and files[0].filename:
+        parsed_results = []
         for f in files:
             content_bytes = await f.read()
-            parsed_res = parse_royalty_statement(f.filename, content_bytes, f_dist=f_dist, is_gross=is_gross)
-            raw_rows.extend(parsed_res.get("rows", []))
+            parsed_res = parse_statement_hybrid(f.filename, content_bytes, f_dist=f_dist, is_gross=is_gross)
+            parsed_results.append(parsed_res)
             parser_summaries.append({
                 "filename": f.filename,
-                "parser_used": "multimodal_llm",
+                "parser_used": parsed_res.get("parser_used", "deterministic_csv_parser"),
                 "row_count": len(parsed_res.get("rows", [])),
                 "status": parsed_res.get("status")
             })
             if not parse_result_meta:
                 parse_result_meta = parsed_res
+
+        # Stage 2: Combine all statements into canonical chronological series
+        agg_result = aggregate_parsed_statements(parsed_results)
+        raw_rows = agg_result.combined_rows
 
     # 2. Fallback to sample dataset if selected and no files parsed
     if not raw_rows and sample_dataset:

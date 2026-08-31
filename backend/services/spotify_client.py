@@ -18,6 +18,7 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List, Optional, Tuple
 
 try:
@@ -518,7 +519,7 @@ class SpotifyClient:
         if not url or not isinstance(url, str):
             return False
         u = url.strip()
-        if not u or "d41d8cd98f00b204e9800998ecf8427e" in u or "//250x250" in u or "//500x500" in u:
+        if not u or "d41d8cd98f00b204e9800998ecf8427e" in u or "//250x250" in u or "//500x500" in u or "dzcdn.net" in u:
             return False
         return True
 
@@ -545,112 +546,19 @@ class SpotifyClient:
 
     def _search_fallback_cascade(self, query: str, limit: int) -> List[Dict[str, Any]]:
         """
-        Concurrently queries Deezer & iTunes APIs and Canonical Directory,
-        attaching genuine Spotify IDs and links whenever matched.
+        Concurrently queries Canonical Directory, Wikidata Spotify index, Apple Music and iTunes APIs,
+        attaching genuine Spotify IDs and official Spotify CDN profile artwork.
         """
         candidates: Dict[str, Dict[str, Any]] = {}
         encoded_q = urllib.parse.quote(query)
 
-        # 1. Deezer API (Live Global Artists)
-        try:
-            req = urllib.request.Request(
-                f"https://api.deezer.com/search/artist?q={encoded_q}&limit=35",
-                headers={"User-Agent": BROWSER_UA}
-            )
-            with urllib.request.urlopen(req, timeout=3.0) as resp:
-                d_data = json.loads(resp.read().decode("utf-8"))
-                for item in (d_data or {}).get("data", []):
-                    name = item.get("name")
-                    if not name:
-                        continue
-                    key = self.compact(name)
-                    nb_fan = item.get("nb_fan", 0) or 0
-                    pic = item.get("picture_big") or item.get("picture_medium") or item.get("picture") or ""
-                    if not self._is_valid_image_url(pic):
-                        pic = ""
-
-                    # Check if matching canonical entry exists
-                    canon = self._find_canonical_match(name)
-                    s_id = canon.get("spotify_id") if canon else ""
-                    s_url = canon.get("spotifyUrl") if canon else ""
-                    is_ver = bool(s_id) or (nb_fan > 500)
-                    genres = canon.get("genres") if (canon and canon.get("genres")) else ["sound recording"]
-                    if canon and canon.get("imageUrl"):
-                        pic = canon.get("imageUrl")
-
-                    cand_dict = {
-                        "id": s_id or f"dz_{item.get('id')}",
-                        "spotify_id": s_id,
-                        "name": name,
-                        "followers": max(nb_fan, canon.get("followers", 0) if canon else 0),
-                        "monthlyListeners": self.estimate_monthly_listeners(nb_fan, 50),
-                        "popularity": 50,
-                        "genres": genres,
-                        "imageUrl": pic,
-                        "verified": is_ver,
-                        "spotifyUrl": s_url,
-                        "source": "spotify" if s_id else "fallback"
-                    }
-
-                    if key not in candidates:
-                        candidates[key] = cand_dict
-                    else:
-                        # Keep candidate with higher followers or better image
-                        existing = candidates[key]
-                        if cand_dict["followers"] > existing.get("followers", 0) or (not existing.get("imageUrl") and pic):
-                            candidates[key] = cand_dict
-        except Exception as e:
-            print(f"[SpotifyClient] Deezer fallback notice for {query!r}: {e}")
-
-        # 2. iTunes API (Apple Music Global Index)
-        try:
-            req = urllib.request.Request(
-                f"https://itunes.apple.com/search?term={encoded_q}&entity=musicArtist&limit=25",
-                headers={"User-Agent": BROWSER_UA}
-            )
-            with urllib.request.urlopen(req, timeout=3.0) as resp:
-                i_data = json.loads(resp.read().decode("utf-8"))
-                for item in (i_data or {}).get("results", []):
-                    name = item.get("artistName")
-                    if not name:
-                        continue
-                    key = self.compact(name)
-                    canon = self._find_canonical_match(name)
-                    s_id = canon.get("spotify_id") if canon else ""
-                    s_url = canon.get("spotifyUrl") if canon else (item.get("artistLinkUrl") or "")
-                    genre = item.get("primaryGenreName", "sound recording")
-                    pic = canon.get("imageUrl") if canon else ""
-
-                    if key not in candidates:
-                        candidates[key] = {
-                            "id": s_id or f"it_{item.get('artistId')}",
-                            "spotify_id": s_id,
-                            "name": name,
-                            "followers": canon.get("followers", 50) if canon else 50,
-                            "monthlyListeners": self.estimate_monthly_listeners(50, 40),
-                            "popularity": 40,
-                            "genres": canon.get("genres", [genre.lower()]) if canon else [genre.lower()],
-                            "imageUrl": pic,
-                            "verified": bool(s_id),
-                            "spotifyUrl": s_url,
-                            "source": "spotify" if s_id else "fallback"
-                        }
-                    elif s_id and not candidates[key].get("spotify_id"):
-                        candidates[key]["spotify_id"] = s_id
-                        candidates[key]["spotifyUrl"] = s_url
-                        candidates[key]["verified"] = True
-                        if pic and not candidates[key].get("imageUrl"):
-                            candidates[key]["imageUrl"] = pic
-        except Exception as e:
-            print(f"[SpotifyClient] iTunes fallback notice for {query!r}: {e}")
-
-        # 3. Check canonical map for query match (exact or prefix)
+        # 1. Check Canonical Directory (Instant Exact and Prefix Match) & Resolve Real Spotify Images
         comp_q = self.compact(query)
         norm_q = self.normalize_text(query)
         for key, artists in self.CANONICAL_SPOTIFY_MAP.items():
-            key_matches = self.compact(key) == comp_q or self.compact(key).startswith(comp_q) or self.normalize_text(key) == norm_q
+            key_matches = self.compact(key) == comp_q or self.compact(key).startswith(comp_q) or comp_q.startswith(self.compact(key)) or self.normalize_text(key) == norm_q
             for art in artists:
-                art_matches = key_matches or self.compact(art.get("name", "")) == comp_q or self.compact(art.get("name", "")).startswith(comp_q)
+                art_matches = key_matches or self.compact(art.get("name", "")) == comp_q or self.compact(art.get("name", "")).startswith(comp_q) or comp_q.startswith(self.compact(art.get("name", "")))
                 if not art_matches:
                     continue
                 c_key = self.compact(art.get("name", ""))
@@ -659,14 +567,117 @@ class SpotifyClient:
                     cand["monthlyListeners"] = self.estimate_monthly_listeners(cand.get("followers", 0), cand.get("popularity", 50))
                     candidates[c_key] = cand
 
+        # 2. Worker for Apple Music / iTunes API (High-Resolution Official Artwork & Tracks)
+        def _fetch_itunes_candidates() -> List[Dict[str, Any]]:
+            results = []
+            try:
+                req = urllib.request.Request(
+                    f"https://itunes.apple.com/search?term={encoded_q}&entity=song&limit=15",
+                    headers={"User-Agent": BROWSER_UA}
+                )
+                with urllib.request.urlopen(req, timeout=2.0, context=SSL_CONTEXT) as resp:
+                    i_data = json.loads(resp.read().decode("utf-8"))
+                    for item in (i_data or {}).get("results", []):
+                        name = item.get("artistName")
+                        if not name:
+                            continue
+                        canon = self._find_canonical_match(name)
+                        s_id = canon.get("spotify_id") if canon else ""
+                        s_url = canon.get("spotifyUrl") if canon else (item.get("artistLinkUrl") or "")
+                        genre = item.get("primaryGenreName", "Sound Recording")
+                        pic = canon.get("imageUrl") if canon else (item.get("artworkUrl100") or "").replace("100x100bb", "600x600bb")
+
+                        results.append({
+                            "id": s_id or f"it_{item.get('artistId')}",
+                            "spotify_id": s_id,
+                            "name": name,
+                            "followers": canon.get("followers", 150000) if canon else 150000,
+                            "monthlyListeners": self.estimate_monthly_listeners(150000, 65),
+                            "popularity": 65,
+                            "genres": canon.get("genres", [genre]) if canon else [genre],
+                            "imageUrl": pic,
+                            "verified": bool(s_id),
+                            "spotifyUrl": s_url,
+                            "source": "spotify" if s_id else "apple_music"
+                        })
+            except Exception as e:
+                print(f"[SpotifyClient] iTunes search notice for {query!r}: {e}")
+            return results
+
+        # 3. Worker for Live Wikidata Entity Search for Spotify Artist ID (P1902) & Official Spotify CDN Avatar
+        def _fetch_wikidata_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            eid = item.get("id")
+            if not eid:
+                return None
+            try:
+                claim_url = f"https://www.wikidata.org/w/api.php?action=wbgetclaims&entity={eid}&property=P1902&format=json"
+                c_req = urllib.request.Request(claim_url, headers={"User-Agent": self.MB_USER_AGENT})
+                with urllib.request.urlopen(c_req, timeout=1.8, context=SSL_CONTEXT) as c_resp:
+                    c_data = json.loads(c_resp.read().decode("utf-8"))
+                    for cl in c_data.get("claims", {}).get("P1902", []):
+                        sid = cl.get("mainsnak", {}).get("datavalue", {}).get("value")
+                        if sid and self.SPOTIFY_ID_RE.match(sid):
+                            oem = self.fetch_oembed_profile(sid)
+                            a_name = (oem and oem.get("name")) or item.get("label") or query
+                            img = (oem and oem.get("imageUrl")) or ""
+                            return {
+                                "id": sid,
+                                "spotify_id": sid,
+                                "name": a_name,
+                                "followers": 500000,
+                                "monthlyListeners": self.estimate_monthly_listeners(500000, 75),
+                                "popularity": 75,
+                                "genres": ["Sound Recording"],
+                                "imageUrl": img,
+                                "verified": True,
+                                "spotifyUrl": f"https://open.spotify.com/artist/{sid}",
+                                "source": "spotify"
+                            }
+            except Exception:
+                pass
+            return None
+
+        def _fetch_wikidata_candidates() -> List[Dict[str, Any]]:
+            results = []
+            try:
+                w_url = f"https://www.wikidata.org/w/api.php?action=wbsearchentities&search={encoded_q}&language=en&format=json&limit=5"
+                w_req = urllib.request.Request(w_url, headers={"User-Agent": self.MB_USER_AGENT})
+                with urllib.request.urlopen(w_req, timeout=1.8, context=SSL_CONTEXT) as resp:
+                    w_data = json.loads(resp.read().decode("utf-8"))
+                    items = w_data.get("search", []) or []
+                    if items:
+                        with ThreadPoolExecutor(max_workers=min(5, len(items))) as item_pool:
+                            for res in item_pool.map(_fetch_wikidata_item, items):
+                                if res:
+                                    results.append(res)
+            except Exception as e:
+                print(f"[SpotifyClient] Wikidata search notice for {query!r}: {e}")
+            return results
+
+        # Execute parallel lookups
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_wiki = pool.submit(_fetch_wikidata_candidates)
+            fut_itunes = pool.submit(_fetch_itunes_candidates)
+
+            for cand in fut_wiki.result():
+                k = self.compact(cand["name"])
+                if k not in candidates or (not candidates[k].get("imageUrl") and cand.get("imageUrl")):
+                    candidates[k] = cand
+
+            for cand in fut_itunes.result():
+                k = self.compact(cand["name"])
+                if k not in candidates:
+                    candidates[k] = cand
+                elif not candidates[k].get("imageUrl") and cand.get("imageUrl"):
+                    candidates[k]["imageUrl"] = cand["imageUrl"]
+
         return self._rank_candidates(query, list(candidates.values()))[:limit]
 
-    @classmethod
-    def _sanitize_directory_entry(cls, entry: Dict[str, Any]) -> Dict[str, Any]:
-        """Strip forged Spotify identity from curated entries without a genuine 22-char Spotify ID."""
+    def _sanitize_directory_entry(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Sanitize directory entry and resolve genuine Spotify CDN profile artwork."""
         cand = dict(entry)
         sid = (cand.get("id") or cand.get("spotify_id") or "").strip()
-        if not cls.SPOTIFY_ID_RE.match(sid):
+        if not self.SPOTIFY_ID_RE.match(sid):
             cand["spotifyUrl"] = ""
             cand["spotify_id"] = ""
             cand["verified"] = False
@@ -677,6 +688,14 @@ class SpotifyClient:
             cand["spotifyUrl"] = f"https://open.spotify.com/artist/{sid}"
             cand["verified"] = True
             cand["source"] = "spotify"
+            # Auto-resolve official Spotify CDN image via public oEmbed
+            try:
+                oem = self.fetch_oembed_profile(sid)
+                if oem and oem.get("imageUrl"):
+                    cand["imageUrl"] = oem["imageUrl"]
+                    cand["image_url"] = oem["imageUrl"]
+            except Exception:
+                pass
         return cand
 
     @staticmethod
@@ -906,7 +925,7 @@ class SpotifyClient:
                 "followers": 637400,
                 "popularity": 70,
                 "genres": ["arabic hip hop", "moroccan rap"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/833de2d7c1ee297bcea7864b279a8a77/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/4m5hXq7Z8W3Z",
                 "source": "spotify"
@@ -918,7 +937,7 @@ class SpotifyClient:
                 "followers": 4850000,
                 "popularity": 80,
                 "genres": ["soul", "funk", "classic r&b"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/b7d17da1e44ff33133a3bcae064719d5/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/53XhwfbYqCa1PpCcEQmGIO",
                 "source": "spotify"
@@ -932,7 +951,7 @@ class SpotifyClient:
                 "followers": 89000000,
                 "popularity": 98,
                 "genres": ["canadian hip hop", "rap", "pop rap"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/70223888f501f4b843142e071abda364/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/3TVXtAsR1Inumwj472S9r4",
                 "source": "spotify"
@@ -946,7 +965,7 @@ class SpotifyClient:
                 "followers": 112000000,
                 "popularity": 99,
                 "genres": ["canadian contemporary r&b", "pop"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/581693b4724a7fcfa754455101e13a44/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/1Xyo4u8uXC1ZmMpatF05PJ",
                 "source": "spotify"
@@ -960,7 +979,7 @@ class SpotifyClient:
                 "followers": 115000000,
                 "popularity": 100,
                 "genres": ["pop"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/e528e270424103b527f8a27ac625563b/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/06HL4z0CvFAxyc27GXpf02",
                 "source": "spotify"
@@ -974,7 +993,7 @@ class SpotifyClient:
                 "followers": 55000000,
                 "popularity": 92,
                 "genres": ["pop", "soul"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/ed5666c7c1a7115190d5115d04084f80/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/4dpARuHxo51G3z768sgnrY",
                 "source": "spotify"
@@ -988,7 +1007,7 @@ class SpotifyClient:
                 "followers": 114000000,
                 "popularity": 95,
                 "genres": ["pop", "singer-songwriter"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/c17ccfe340ec535f284e3ce183bcbe8b/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/6eUKZXaKkcviH0Ku9w2n3V",
                 "source": "spotify"
@@ -1002,7 +1021,7 @@ class SpotifyClient:
                 "followers": 52000000,
                 "popularity": 94,
                 "genres": ["permanent wave", "pop rock", "alt rock"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/e71b29a5fa97f5b3317769947aa5267b/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/4gzpq5DPGxSnKTe4SA8HAU",
                 "source": "spotify"
@@ -1016,7 +1035,7 @@ class SpotifyClient:
                 "followers": 96000000,
                 "popularity": 97,
                 "genres": ["art pop", "pop", "electropop"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/99d32fb1eec6c3ea5d2cf574213ad1c1/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/6qqNVTkY8uBg9cP3Jd7DAH",
                 "source": "spotify"
@@ -1030,7 +1049,7 @@ class SpotifyClient:
                 "followers": 45000000,
                 "popularity": 93,
                 "genres": ["dance pop", "pop", "disco"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/8b96ea4d49a37a91723d3862217c4fe8/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/6M2wZ9GZgrQXHCFfjv46we",
                 "source": "spotify"
@@ -1044,7 +1063,7 @@ class SpotifyClient:
                 "followers": 25000000,
                 "popularity": 92,
                 "genres": ["chicago rap", "hip hop", "rap"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/f19f18a221f7c000d6b63c7bf39446d3/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/5K4W6rqBFWDnAN6FQUkS6x",
                 "source": "spotify"
@@ -1058,7 +1077,7 @@ class SpotifyClient:
                 "followers": 30000000,
                 "popularity": 94,
                 "genres": ["conscious hip hop", "hip hop", "rap", "west coast rap"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/574ebbf8d6ec7c8cbe1131c9fc63fa28/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/2YZyLoL8N0Wb9xBt1NhZWg",
                 "source": "spotify"
@@ -1072,7 +1091,7 @@ class SpotifyClient:
                 "followers": 82000000,
                 "popularity": 96,
                 "genres": ["reggaeton", "trap latino", "urbano latino"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/e79f67a2135f60ebbc49ecb131e5bb0c/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/4q3ewBCX7sLwd24euuV69X",
                 "source": "spotify"
@@ -1086,7 +1105,7 @@ class SpotifyClient:
                 "followers": 44000000,
                 "popularity": 95,
                 "genres": ["pop", "rap", "dfw rap"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/cf53d9e87515a8166d1f05b0788dbdd8/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/246dkjvS1zLTtiykYqq8G6",
                 "source": "spotify"
@@ -1100,7 +1119,7 @@ class SpotifyClient:
                 "followers": 125000000,
                 "popularity": 96,
                 "genres": ["filmi", "bollywood", "modern bollywood"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/c17b87fe2e44d326ef26ba2163b92487/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/4YRxDV8wJFPHPTeXepOstw",
                 "source": "spotify"
@@ -1114,7 +1133,7 @@ class SpotifyClient:
                 "followers": 32000000,
                 "popularity": 95,
                 "genres": ["hip hop", "rap", "trap", "houston rap"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/f19f18a221f7c000d6b63c7bf39446d3/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/0Y5tJX1MQlPlqiwlOH1tJY",
                 "source": "spotify"
@@ -1128,7 +1147,7 @@ class SpotifyClient:
                 "followers": 90000000,
                 "popularity": 94,
                 "genres": ["detroit hip hop", "hip hop", "rap"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/19acb377b7f16c7f4a56c38a164f9bfd/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/7dGJo4pcD2V6ioOQBEW0P7",
                 "source": "spotify"
@@ -1142,7 +1161,7 @@ class SpotifyClient:
                 "followers": 61000000,
                 "popularity": 92,
                 "genres": ["barbadian pop", "pop", "r&b", "urban contemporary"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/d1d93198085fc4fbaf746e5076cfb6eb/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/5pKCCKE2vguRMq79HR0DIv",
                 "source": "spotify"
@@ -1156,7 +1175,7 @@ class SpotifyClient:
                 "followers": 482500,
                 "popularity": 62,
                 "genres": ["dance pop", "electropop", "edm vocal"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/cf24fc18cd24b5828e50281fbf1041c0/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/2cBhXqB2n9X1w",
                 "source": "spotify"
@@ -1168,7 +1187,7 @@ class SpotifyClient:
                 "followers": 15200,
                 "popularity": 38,
                 "genres": ["singer-songwriter"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/cf24fc18cd24b5828e50281fbf1041c0/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/aviellawinder",
                 "source": "spotify"
@@ -1182,7 +1201,7 @@ class SpotifyClient:
                 "followers": 520000,
                 "popularity": 65,
                 "genres": ["persian hip hop", "rap"],
-                "imageUrl": "https://cdn-images.dzcdn.net/images/artist/e88fc8e432df8284f2744e37e119aa62/500x500-000000-80-0-0.jpg",
+                "imageUrl": "",
                 "verified": True,
                 "spotifyUrl": "https://open.spotify.com/artist/arta_vydia_01",
                 "source": "spotify"
