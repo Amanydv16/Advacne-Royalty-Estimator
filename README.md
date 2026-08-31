@@ -89,7 +89,7 @@ $$A_{\text{total}} = A_{\text{catalog}} + A_{\text{new}}$$
 
 The catalogue advance is defined as:
 
-$$A_{\text{catalog}} = R_0 \times K(T) \times (1 - p) \times E(e)$$
+$$A_{\text{catalog}} = R_0 \times K(T)  \times E(e)$$
 
 #### 1. Trailing Monthly Revenue Anchor ($R_0$)
 To protect against single-month anomalies, $R_0$ is calculated as the median of the last $R_{\text{win}}$ usable statement months (default $R_{\text{win}} = 3$):
