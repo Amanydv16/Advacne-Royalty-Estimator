@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Tuple, Optional
 from collections import defaultdict
 import math
 from .config import DEFAULT_CONFIG, clamp, clamp01, median
+from backend.services.spotify_client import spotify_client
 
 
 class CatalogValuationResult:
@@ -164,17 +165,34 @@ def compute_share_weighted_decay(
     d_ref = config.get("D_REF", 0.10)
     min_share = config.get("MIN_SHARE", 0.005)
     
-    # Group revenue by song and month
+    # Group revenue by song, month, and store
     song_month_rev = defaultdict(lambda: defaultdict(float))
+    month_total_rev = defaultdict(float)
+    song_store_month_rev = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
+    song_store_rev = defaultdict(lambda: defaultdict(float))
     song_names = {}
+    song_artworks = {}
     total_cat_rev = 0.0
 
     for r in usable_rows:
         key = r.get("isrc") or r.get("title") or "Unknown"
-        m = r["sale_month"]
-        rev = max(0.0, r["earnings_usd"])
+        m = r.get("sale_month") or r.get("month") or "2026-01"
+        rev = max(0.0, float(r.get("earnings_usd", 0.0)))
+        store = r.get("store") or r.get("dsp") or "Streaming"
+        
         song_month_rev[key][m] += rev
-        song_names[key] = r.get("title") or key
+        month_total_rev[m] += rev
+        song_store_month_rev[key][m][store] += rev
+        song_store_rev[key][store] += rev
+        
+        if r.get("title") and r.get("title") != key:
+            song_names[key] = r.get("title")
+        elif key not in song_names:
+            song_names[key] = key
+
+        if r.get("artwork") or r.get("image"):
+            song_artworks[key] = r.get("artwork") or r.get("image")
+            
         total_cat_rev += rev
 
     if total_cat_rev <= 0:
@@ -186,48 +204,114 @@ def compute_share_weighted_decay(
 
     for s_key, m_rev_map in song_month_rev.items():
         s_total = sum(m_rev_map.values())
-        share_i = s_total / total_cat_rev
-        if share_i < min_share:
-            continue
+        share_i = s_total / total_cat_rev if total_cat_rev > 0 else 0.0
 
-        # Extract sequence across all usable months
+        # Resolve canonical metadata and high-res artwork image by ISRC
+        if not song_artworks.get(s_key):
+            meta = spotify_client.resolve_track_by_isrc(s_key)
+            if meta:
+                if meta.get("artwork"):
+                    song_artworks[s_key] = meta["artwork"]
+                if meta.get("title") and (song_names.get(s_key) == s_key or not song_names.get(s_key)):
+                    song_names[s_key] = meta["title"]
+
+        # Build detailed monthly history for this specific ISRC
+        monthly_history = []
+        prev_val = None
+        for m in usable_months:
+            m_val = round(m_rev_map.get(m, 0.0), 2)
+            mom_pct = None
+            if prev_val is not None and prev_val > 0:
+                mom_pct = round(((m_val - prev_val) / prev_val) * 100, 1)
+            prev_val = m_val if m_val > 0 else prev_val
+            
+            m_tot = month_total_rev.get(m, 0.0)
+            m_share_pct = round((m_val / m_tot * 100), 1) if m_tot > 0 else 0.0
+            
+            st_map = {
+                st: round(amt, 2)
+                for st, amt in song_store_month_rev[s_key][m].items()
+                if amt > 0
+            }
+            primary_st = max(st_map.items(), key=lambda x: x[1])[0] if st_map else "Streaming"
+
+            monthly_history.append({
+                "month": m,
+                "earnings": m_val,
+                "mom_pct": mom_pct,
+                "month_share_pct": m_share_pct,
+                "primary_dsp": primary_st,
+                "stores": st_map
+            })
+
+        active_items = [h for h in monthly_history if h["earnings"] > 0]
+        n_active = len(active_items)
+        latest_item = active_items[-1] if active_items else (monthly_history[-1] if monthly_history else None)
+        prev_item = active_items[-2] if len(active_items) >= 2 else None
+        
+        latest_rev = latest_item["earnings"] if latest_item else 0.0
+        prev_rev = prev_item["earnings"] if prev_item else None
+        mom_change = latest_item.get("mom_pct") if (latest_item and prev_rev is not None) else None
+        
+        peak_item = max(monthly_history, key=lambda x: x["earnings"]) if monthly_history else None
+        peak_month = peak_item["month"] if peak_item else (usable_months[0] if usable_months else "")
+        peak_rev = peak_item["earnings"] if peak_item else 0.0
+        
+        dsp_summary = {st: round(amt, 2) for st, amt in song_store_rev[s_key].items() if amt > 0}
+        dsp_shares = {st: round((amt / s_total * 100), 1) for st, amt in dsp_summary.items()} if s_total > 0 else {}
+
+        # Extract sequence across all usable months for log-linear decay regression
         vals = [m_rev_map.get(m, 0.0) for m in usable_months]
         nz = [k for k, v in enumerate(vals) if v > 0]
-        if not nz:
-            continue
-
-        # Trim leading and trailing zeros: active life of song
-        seg = vals[nz[0] : nz[-1] + 1]
-        pts = [(k, v) for k, v in enumerate(seg) if v > 0]  # skip interior zeros
-        if len(pts) < 3:
-            continue
-
-        # Keep original x-axis positions from trimmed segment
-        xs = [k for k, _ in pts]
-        ys = [math.log(v) for _, v in pts]
-        n_obs = len(pts)
         
-        xbar = sum(xs) / n_obs
-        ybar = sum(ys) / n_obs
+        g_i = 0.0
+        severity_i = 0.0
+        n_obs = len(nz)
         
-        num = sum((xs[k] - xbar) * (ys[k] - ybar) for k in range(n_obs))
-        den = sum((xs[k] - xbar) ** 2 for k in range(n_obs))
-        
-        slope = num / den if den > 0 else 0.0
-        g_i = math.exp(slope) - 1.0  # Monthly growth rate
-        severity_i = clamp01(-g_i / d_ref)
-        
-        weighted_severity_sum += share_i * severity_i
-        covered_rev_sum += share_i
+        if nz:
+            seg = vals[nz[0] : nz[-1] + 1]
+            pts = [(k, v) for k, v in enumerate(seg) if v > 0]
+            if len(pts) >= 3:
+                xs = [k for k, _ in pts]
+                ys = [math.log(v) for _, v in pts]
+                n_obs = len(pts)
+                xbar = sum(xs) / n_obs
+                ybar = sum(ys) / n_obs
+                num = sum((xs[k] - xbar) * (ys[k] - ybar) for k in range(n_obs))
+                den = sum((xs[k] - xbar) ** 2 for k in range(n_obs))
+                slope = num / den if den > 0 else 0.0
+                g_i = math.exp(slope) - 1.0
+                severity_i = clamp01(-g_i / d_ref)
+                
+                if share_i >= min_share:
+                    weighted_severity_sum += share_i * severity_i
+                    covered_rev_sum += share_i
 
         per_song_records.append({
             "identifier": s_key,
             "title": song_names.get(s_key, s_key),
+            "artwork": song_artworks.get(s_key, ""),
             "share": round(share_i, 4),
+            "share_pct": round(share_i * 100, 2),
+            "total_revenue": round(s_total, 2),
+            "verified_months_count": n_active,
+            "latest_month": latest_item["month"] if latest_item else "",
+            "latest_month_rev": latest_rev,
+            "previous_month": prev_item["month"] if prev_item else None,
+            "previous_month_rev": prev_rev,
+            "mom_change_pct": mom_change,
+            "peak_month": peak_month,
+            "peak_monthly_rev": peak_rev,
             "monthly_growth_rate": round(g_i, 4),
             "severity": round(severity_i, 4),
-            "months_observed": n_obs
+            "months_observed": n_obs,
+            "monthly_history": monthly_history,
+            "dsp_breakdown": dsp_summary,
+            "dsp_shares": dsp_shares
         })
+
+    # Sort songs by actual observed historical revenue descending
+    per_song_records.sort(key=lambda x: x["total_revenue"], reverse=True)
 
     d_decay = w_decay * weighted_severity_sum
     decay_coverage = covered_rev_sum

@@ -244,7 +244,7 @@ class ValuationEngine:
                 "top_songs": [
                     {
                         **s,
-                        "monthly_rev": round(s.get("share", 0.0) * catalog_res.r0, 2),
+                        "monthly_rev": round(s.get("latest_month_rev") if s.get("latest_month_rev") is not None else s.get("share", 0.0) * catalog_res.r0, 2),
                         "advance_allocation": round(s.get("share", 0.0) * a_catalog, 2)
                     }
                     for s in catalog_res.per_song_decay

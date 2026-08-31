@@ -33,6 +33,7 @@ from backend.engine.config import DEFAULT_CONFIG
 from backend.engine.normalizer import parse_csv_or_tsv_content, detect_and_normalize_table
 from backend.engine.valuation_engine import ValuationEngine
 from backend.engine.aggregator import aggregate_parsed_statements
+from backend.services.soundcharts_client import soundcharts_client
 
 
 
@@ -296,6 +297,8 @@ from pydantic import BaseModel
 
 class SoundchartsRollupRequest(BaseModel):
     isrcs: List[str] = []
+    spotify_id: Optional[str] = None
+    artist_name: Optional[str] = None
 
 
 @app.get("/api/artists/search")
@@ -471,47 +474,12 @@ def get_soundcharts_rollup(payload: SoundchartsRollupRequest):
     Calculates lifetime streams, monthly streams, YouTube views, YoY growth, and catalog coverage.
     """
     raw_isrcs = payload.isrcs or []
-    clean_isrcs = list(dict.fromkeys([s.strip().upper() for s in raw_isrcs if isinstance(s, str) and s.strip()]))
-
-    if not clean_isrcs:
-        return JSONResponse(content={
-            "requestedIsrcs": 0,
-            "trackedIsrcs": 0,
-            "coveragePct": 0,
-            "lifetimeStreams": 0,
-            "monthlyStreams": 0,
-            "youtubeViews": 0,
-            "youtubeMonthly": 0,
-            "yoyGrowthPct": 0.0
-        })
-
-    total_isrcs = len(clean_isrcs)
-    
-    # Calculate deterministic stream metrics based on catalog ISRCs
-    base_lifetime = 0
-    for isrc in clean_isrcs:
-        # Generate realistic stream count based on ISRC hash value
-        h = abs(hash(isrc))
-        track_lifetime = 250000 + (h % 3500000)
-        base_lifetime += track_lifetime
-
-    monthly_streams = int(base_lifetime * 0.038)  # ~3.8% monthly velocity
-    youtube_views = int(base_lifetime * 0.32)      # ~32% YouTube view ratio
-    youtube_monthly = int(monthly_streams * 0.28)
-    
-    # YoY Growth rate estimation (between +8.5% and +34.2%)
-    yoy_growth = round(12.5 + ((abs(hash(clean_isrcs[0])) % 200) / 10.0), 1)
-
-    return JSONResponse(content={
-        "requestedIsrcs": total_isrcs,
-        "trackedIsrcs": total_isrcs,
-        "coveragePct": 100,
-        "lifetimeStreams": base_lifetime,
-        "monthlyStreams": monthly_streams,
-        "youtubeViews": youtube_views,
-        "youtubeMonthly": youtube_monthly,
-        "yoyGrowthPct": yoy_growth
-    })
+    rollup = soundcharts_client.get_catalog_streaming_rollup(
+        isrcs=raw_isrcs,
+        spotify_id=payload.spotify_id,
+        artist_name=payload.artist_name
+    )
+    return JSONResponse(content=rollup)
 
 
 
@@ -890,10 +858,17 @@ async def evaluate_statements(
     if not result.get("success") and result.get("flags") and "INVALID_RHO" in result["flags"]:
         raise HTTPException(status_code=400, detail=result.get("error", "Invalid rho"))
 
-    # Attach parser provenance so the frontend can show how each file was parsed
-    if isinstance(result, dict) and parser_summaries:
-        result["parser_provenance"] = parser_summaries
-        llm_used = any(s.get("parser_used") == "llm" for s in parser_summaries)
-        result["llm_parser_used"] = llm_used
+    # Extract unique catalog ISRCs and fetch live Soundcharts streaming intelligence
+    catalog_isrcs = list(dict.fromkeys([
+        r.get("isrc") for r in raw_rows
+        if r.get("isrc") and str(r.get("isrc")).strip()
+    ]))
+    soundcharts_rollup = soundcharts_client.get_catalog_streaming_rollup(
+        isrcs=catalog_isrcs,
+        spotify_id=spotify_id,
+        artist_name=artist_name
+    )
+    if isinstance(result, dict):
+        result["soundcharts_rollup"] = soundcharts_rollup
 
     return result

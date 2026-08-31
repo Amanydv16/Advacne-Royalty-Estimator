@@ -1691,6 +1691,79 @@ class SpotifyClient:
 
         return tracks
 
+    def resolve_track_by_isrc(self, isrc: str) -> Optional[Dict[str, Any]]:
+        """
+        Resolves canonical song title, artist, and high-resolution cover artwork by ISRC
+        using Deezer, iTunes, and Spotify directories with in-memory caching.
+        """
+        if not isrc:
+            return None
+        clean_isrc = isrc.strip().upper().replace("-", "")
+        if not clean_isrc:
+            return None
+
+        # Check in-memory cache
+        cache_key = f"isrc_meta_{clean_isrc}"
+        with self._lock:
+            if hasattr(self, "_isrc_cache") and cache_key in self._isrc_cache:
+                return self._isrc_cache[cache_key]
+
+        if not hasattr(self, "_isrc_cache"):
+            self._isrc_cache = {}
+
+        # 1. Try Deezer ISRC API (Exact, fast, global coverage)
+        try:
+            url = f"https://api.deezer.com/track/isrc:{clean_isrc}"
+            req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA})
+            with urllib.request.urlopen(req, timeout=3.0, context=SSL_CONTEXT) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if data and "title" in data and not data.get("error"):
+                    title = data.get("title", "")
+                    artist = data.get("artist", {}).get("name", "")
+                    art = data.get("album", {}).get("cover_big") or data.get("album", {}).get("cover_medium", "")
+                    album = data.get("album", {}).get("title", "")
+                    result = {
+                        "isrc": clean_isrc,
+                        "title": title,
+                        "artist": artist,
+                        "artwork": art,
+                        "album": album
+                    }
+                    with self._lock:
+                        self._isrc_cache[cache_key] = result
+                    return result
+        except Exception:
+            pass
+
+        # 2. Try iTunes Search API by ISRC
+        try:
+            url = f"https://itunes.apple.com/search?term={clean_isrc}&entity=song&limit=1"
+            req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA})
+            with urllib.request.urlopen(req, timeout=3.0, context=SSL_CONTEXT) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                results = data.get("results", [])
+                if results:
+                    item = results[0]
+                    title = item.get("trackName", "")
+                    artist = item.get("artistName", "")
+                    art = (item.get("artworkUrl100") or "").replace("100x100bb", "300x300bb")
+                    album = item.get("collectionName", "")
+                    result = {
+                        "isrc": clean_isrc,
+                        "title": title,
+                        "artist": artist,
+                        "artwork": art,
+                        "album": album
+                    }
+                    with self._lock:
+                        self._isrc_cache[cache_key] = result
+                    return result
+        except Exception:
+            pass
+
+        return None
+
 
 # Global singleton instance
 spotify_client = SpotifyClient()
+
