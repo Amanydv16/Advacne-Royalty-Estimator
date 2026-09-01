@@ -2813,4 +2813,186 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 .song-drilldown-table tbody tr:hover {
   background: rgba(255, 255, 255, 0.03);
-}
+}
+
+/* ============================================================
+   SONG FILTER POPOVER & CHECKBOX STYLES (STAGE 2)
+   ============================================================ */
+
+.song-filter-control-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.song-filter-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 380px;
+  background: var(--mt-bg-2);
+  border: 1px solid var(--mt-border);
+  border-radius: var(--mt-radius-sm);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.7);
+  z-index: 120;
+  padding: 14px;
+  animation: fadeIn 150ms ease-out;
+}
+
+@media (max-width: 480px) {
+  .song-filter-popover {
+    width: 300px;
+    right: -50px;
+  }
+}
+
+.song-filter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--mt-border);
+}
+
+.song-filter-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--mt-fg-1);
+}
+
+.song-filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.song-filter-link-btn {
+  background: none;
+  border: none;
+  color: var(--mt-fg-3);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s ease;
+}
+
+.song-filter-link-btn:hover {
+  color: var(--mt-red);
+  text-decoration: underline;
+}
+
+.song-filter-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--mt-bg-3);
+  border: 1px solid var(--mt-border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+}
+
+.song-filter-search-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 12px;
+  color: var(--mt-fg-1);
+  width: 100%;
+}
+
+.song-filter-search-input::placeholder {
+  color: var(--mt-fg-4);
+}
+
+.song-filter-items-list {
+  max-height: 220px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+  padding-right: 4px;
+}
+
+.song-filter-items-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.song-filter-items-list::-webkit-scrollbar-thumb {
+  background: var(--mt-border);
+  border-radius: 4px;
+}
+
+.song-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+  user-select: none;
+}
+
+.song-filter-item:hover {
+  background: var(--mt-bg-3);
+}
+
+.song-filter-checkbox {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--mt-red);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.song-filter-item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.song-filter-track-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mt-fg-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.song-filter-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 1px;
+}
+
+.song-filter-isrc-tag {
+  font-size: 10px;
+  font-family: var(--mt-font-mono);
+  color: var(--mt-fg-3);
+}
+
+.song-filter-revenue-tag {
+  font-size: 10px;
+  font-family: var(--mt-font-mono);
+  font-weight: 600;
+  color: var(--mt-red);
+}
+
+.song-filter-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 8px;
+  border-top: 1px solid var(--mt-border);
+}
+
+.song-filter-count-text {
+  font-size: 11px;
+  color: var(--mt-fg-3);
+  font-weight: 500;
+}
+

@@ -29,7 +29,10 @@ const state = {
   uploadedFiles: [],
   hasUploadedValidData: false,
   sampleDatasetLoaded: null,
-  activeValuationResult: null
+  activeValuationResult: null,
+  allExtractedSongs: [],
+  selectedSongIds: new Set(),
+  pendingFilterSelection: new Set()
 };
 
 // Distributor Master Directory
@@ -1650,53 +1653,316 @@ function renderMultimodalParserResults(data) {
     }
   }
 
-  // Monthly Breakdown / Earnings Table
-  const tbody = document.getElementById('monthlyBreakdownTableBody');
-  if (tbody) {
-    const earningsList = (data.monthly_earnings && data.monthly_earnings.length > 0) ? data.monthly_earnings : [];
-    const breakdownList = data.monthly_breakdown || [];
+  // Initialize Song Filter
+  initSongFilterFromData(data);
 
-    const listToRender = breakdownList.length > 0 ? breakdownList : earningsList;
+  // Render Monthly Breakdown / Earnings Table
+  const earningsList = (data.monthly_earnings && data.monthly_earnings.length > 0) ? data.monthly_earnings : [];
+  const breakdownList = data.monthly_breakdown || [];
+  renderMonthlyBreakdownTable(breakdownList.length > 0 ? breakdownList : earningsList);
 
-    if (listToRender.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-dim);">No monthly breakdown extracted.</td></tr>`;
+  lucide.createIcons();
+}
+
+// ============================================================
+// SONG FILTERING ARCHITECTURE (STAGE 2)
+// ============================================================
+
+function initSongFilterFromData(data) {
+  let songs = [];
+  if (data.raw_songs && Array.isArray(data.raw_songs) && data.raw_songs.length > 0) {
+    songs = data.raw_songs;
+  } else if (data.rows && Array.isArray(data.rows) && data.rows.length > 0) {
+    const songMap = {};
+    data.rows.forEach(r => {
+      const isrc = (r.isrc || '').trim();
+      const title = (r.title || '').trim();
+      const key = isrc || title || 'Recording';
+      const amt = parseFloat(r.earnings_usd || r.earnings_exact_str || 0) || 0;
+      if (!songMap[key]) {
+        songMap[key] = {
+          identifier: key,
+          isrc: isrc || key,
+          title: title || isrc || 'Recording',
+          total_revenue: 0,
+          monthly_history: []
+        };
+      }
+      songMap[key].total_revenue += amt;
+    });
+    songs = Object.values(songMap);
+  } else if (state.selectedArtist && state.selectedArtist.catalogTracks && state.selectedArtist.catalogTracks.length > 0) {
+    songs = state.selectedArtist.catalogTracks.map(t => ({
+      identifier: t.isrc || t.title,
+      isrc: t.isrc || '',
+      title: t.title || 'Track',
+      total_revenue: 0
+    }));
+  }
+
+  // Sort songs by revenue descending
+  songs.sort((a, b) => (b.total_revenue || 0) - (a.total_revenue || 0));
+  state.allExtractedSongs = songs;
+
+  // By default, ALL songs are selected
+  state.selectedSongIds = new Set(songs.map(s => s.identifier || s.isrc || s.title));
+  state.pendingFilterSelection = new Set(state.selectedSongIds);
+
+  updateSongFilterUI();
+}
+
+function updateSongFilterUI() {
+  const totalCount = state.allExtractedSongs.length;
+  const selectedCount = state.selectedSongIds.size;
+
+  const btnText = document.querySelector('#songFilterBtn span');
+  if (btnText) {
+    btnText.innerText = (selectedCount === totalCount || totalCount === 0) ? 'Filter by songs' : `Songs (${selectedCount}/${totalCount})`;
+  }
+
+  const countStatus = document.getElementById('songFilterCountStatus');
+  if (countStatus) {
+    countStatus.innerText = `${selectedCount} of ${totalCount} songs selected`;
+  }
+
+  const banner = document.getElementById('songFilterSummaryBanner');
+  const summaryText = document.getElementById('songFilterActiveSummary');
+  if (banner && summaryText) {
+    if (totalCount > 0 && selectedCount < totalCount) {
+      banner.style.display = 'flex';
+      summaryText.innerText = `${selectedCount} of ${totalCount} songs selected`;
     } else {
-      tbody.innerHTML = listToRender.map((m, idx) => {
-        const monthName = m.month || 'Unknown';
-        const rawAmt = m.net_royalty !== undefined ? m.net_royalty : (m.earnings || m.amount || 0);
-        const exactAmountStr = formatTwoDecimals(rawAmt);
-
-        // Lookup matching legacy breakdown item if rendering earningsList
-        const legItem = breakdownList.find(b => b.month === monthName) || (breakdownList[idx] || m);
-
-        const topSource = legItem.primary_source || (legItem.sources && legItem.sources.length > 0 ? legItem.sources[0].platform : 'Streaming / Sales');
-        const momStr = legItem.mom_growth_pct !== null && legItem.mom_growth_pct !== undefined
-          ? (legItem.mom_growth_pct >= 0 ? `<span style="color:#34d399; font-weight:600;">+${legItem.mom_growth_pct}%</span>` : `<span style="color:#f87171; font-weight:600;">${legItem.mom_growth_pct}%</span>`)
-          : `<span style="color:var(--text-dim);">Baseline</span>`;
-        const trackCountStr = legItem.track_count ? `${legItem.track_count} Track${legItem.track_count > 1 ? 's' : ''}` : '1 Track';
-
-        // Source Provenance Badge
-        const prov = m.provenance || {};
-        const provFile = prov.source_file || data.statement_metadata?.source_file || 'statement.csv';
-        const provRow = prov.source_row ? ` (Row ${prov.source_row})` : '';
-
-        return `
-          <tr>
-            <td><strong>${escapeHtml(monthName)}</strong></td>
-            <td>
-              <strong style="color:#34d399; font-size:1.05rem;">${escapeHtml(exactAmountStr)}</strong>
-              <div style="font-size:0.7rem; color:var(--text-dim);" title="${escapeHtml(provFile + provRow)}">
-                <i data-lucide="file-check" style="width:10px; height:10px; vertical-align:middle;"></i> ${escapeHtml(provFile.substring(0, 18))}${provFile.length > 18 ? '...' : ''}${provRow}
-              </div>
-            </td>
-            <td>${momStr}</td>
-            <td><span style="color:#e2e8f0; font-size:0.85rem;">${escapeHtml(trackCountStr)}</span></td>
-            <td><code style="background:rgba(99,102,241,0.1); color:#a5b4fc; padding:3px 8px; border-radius:4px; font-size:0.8rem;">${escapeHtml(topSource)}</code></td>
-          </tr>
-        `;
-      }).join('');
+      banner.style.display = 'none';
     }
   }
+}
+
+function toggleSongFilterDropdown(e) {
+  if (e) e.stopPropagation();
+  const popover = document.getElementById('songFilterPopover');
+  if (!popover) return;
+
+  const isHidden = (popover.style.display === 'none' || !popover.style.display);
+  if (isHidden) {
+    state.pendingFilterSelection = new Set(state.selectedSongIds);
+    renderSongFilterItems();
+    popover.style.display = 'block';
+  } else {
+    popover.style.display = 'none';
+  }
+}
+
+function closeSongFilterDropdown() {
+  const popover = document.getElementById('songFilterPopover');
+  if (popover) popover.style.display = 'none';
+}
+
+function handleSongFilterSearch(query) {
+  renderSongFilterItems(query);
+}
+
+function renderSongFilterItems(query = '') {
+  const container = document.getElementById('songFilterItemsContainer');
+  if (!container) return;
+
+  const cleanQ = (query || '').toLowerCase().trim();
+  const filtered = state.allExtractedSongs.filter(s => {
+    if (!cleanQ) return true;
+    const title = (s.title || '').toLowerCase();
+    const isrc = (s.isrc || '').toLowerCase();
+    return title.includes(cleanQ) || isrc.includes(cleanQ);
+  });
+
+  if (filtered.length === 0) {
+    container.innerHTML = `<div style="text-align: center; padding: 14px; font-size: 12px; color: var(--mt-fg-4);">No matching songs found</div>`;
+    return;
+  }
+
+  container.innerHTML = filtered.map(s => {
+    const songId = s.identifier || s.isrc || s.title;
+    const isChecked = state.pendingFilterSelection.has(songId);
+    const title = s.title || s.name || 'Song';
+    const isrc = s.isrc || s.identifier || '';
+    const revStr = s.total_revenue ? `$${s.total_revenue.toFixed(2)}` : '';
+
+    return `
+      <div class="song-filter-item" onclick="togglePendingSongSelection('${escapeHtml(songId)}')">
+        <input type="checkbox" class="song-filter-checkbox" ${isChecked ? 'checked' : ''} onclick="event.stopPropagation(); togglePendingSongSelection('${escapeHtml(songId)}')">
+        <div class="song-filter-item-info">
+          <div class="song-filter-track-title" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
+          <div class="song-filter-meta-row">
+            ${isrc ? `<span class="song-filter-isrc-tag">${escapeHtml(isrc)}</span>` : ''}
+            ${revStr ? `<span class="song-filter-revenue-tag">• ${revStr}</span>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const countStatus = document.getElementById('songFilterCountStatus');
+  if (countStatus) {
+    countStatus.innerText = `${state.pendingFilterSelection.size} of ${state.allExtractedSongs.length} songs selected`;
+  }
+}
+
+function togglePendingSongSelection(songId) {
+  if (state.pendingFilterSelection.has(songId)) {
+    state.pendingFilterSelection.delete(songId);
+  } else {
+    state.pendingFilterSelection.add(songId);
+  }
+  renderSongFilterItems(document.getElementById('songFilterSearchInput')?.value || '');
+}
+
+function selectAllFilterSongs() {
+  state.allExtractedSongs.forEach(s => {
+    state.pendingFilterSelection.add(s.identifier || s.isrc || s.title);
+  });
+  renderSongFilterItems(document.getElementById('songFilterSearchInput')?.value || '');
+}
+
+function deselectAllFilterSongs() {
+  state.pendingFilterSelection.clear();
+  renderSongFilterItems(document.getElementById('songFilterSearchInput')?.value || '');
+}
+
+function applySongFilterSelection() {
+  if (state.pendingFilterSelection.size === 0) {
+    alert('Please select at least one song to include in the calculation.');
+    return;
+  }
+
+  state.selectedSongIds = new Set(state.pendingFilterSelection);
+  closeSongFilterDropdown();
+  updateSongFilterUI();
+  recalculateAndRenderFilteredBreakdown();
+}
+
+function recalculateAndRenderFilteredBreakdown() {
+  const data = state.parsedStatementData;
+  if (!data) return;
+
+  const rawSongs = data.raw_songs || [];
+  const isFullSelection = (state.selectedSongIds.size === state.allExtractedSongs.length);
+
+  function formatTwoDecimals(val) {
+    if (val === null || val === undefined || val === '') return '$0.00';
+    const cleanStr = String(val).replace(/[\$,\s]/g, '');
+    const n = parseFloat(cleanStr);
+    if (isNaN(n)) return '$0.00';
+    return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  const currencyCode = data.statement_metadata?.currency || 'USD';
+
+  if (isFullSelection || rawSongs.length === 0) {
+    // Revert to full unfiltered data
+    const rawNet = data.totals?.net !== undefined ? data.totals.net : (data.totals?.net_str || 0);
+    const medVal = data.r0_median !== undefined ? data.r0_median : 317.59;
+    state.declaredMonthlyRevenue = medVal;
+
+    const calcNet = document.getElementById('parserCalculatedNet');
+    if (calcNet) calcNet.innerText = `${formatTwoDecimals(rawNet)} ${currencyCode}`;
+
+    const trailingMed = document.getElementById('parserTrailingMedian');
+    if (trailingMed) trailingMed.innerText = `${formatTwoDecimals(medVal)} ${currencyCode}`;
+
+    renderMonthlyBreakdownTable(data.monthly_breakdown || data.monthly_earnings);
+    return;
+  }
+
+  // Filter songs
+  const filteredSongs = rawSongs.filter(s => state.selectedSongIds.has(s.identifier || s.isrc || s.title));
+  
+  // Aggregate monthly earnings for selected songs
+  const monthsMap = {};
+  filteredSongs.forEach(s => {
+    (s.monthly_history || []).forEach(h => {
+      if (!monthsMap[h.month]) {
+        monthsMap[h.month] = { month: h.month, net_royalty: 0, track_count: 0, primary_source: 'Streaming' };
+      }
+      monthsMap[h.month].net_royalty += (h.earnings || 0);
+      if ((h.earnings || 0) > 0) {
+        monthsMap[h.month].track_count += 1;
+      }
+    });
+  });
+
+  const sortedMonths = Object.keys(monthsMap).sort();
+  let prevNet = null;
+  let filteredTotalNet = 0;
+
+  const filteredBreakdown = sortedMonths.map(m => {
+    const item = monthsMap[m];
+    const net = Math.round(item.net_royalty * 100) / 100;
+    filteredTotalNet += net;
+    let momGrowth = null;
+    if (prevNet !== null && prevNet > 0) {
+      momGrowth = Math.round(((net - prevNet) / prevNet) * 1000) / 10;
+    }
+    prevNet = net;
+
+    return {
+      month: m,
+      net_royalty: net,
+      currency: currencyCode,
+      mom_growth_pct: momGrowth,
+      track_count: Math.max(1, item.track_count),
+      primary_source: item.primary_source || 'Streaming'
+    };
+  });
+
+  // Calculate trailing-3 median for filtered songs
+  const recent3 = filteredBreakdown.slice(-3).map(m => m.net_royalty).sort((a, b) => a - b);
+  const filteredR0 = recent3.length > 0 ? recent3[Math.floor(recent3.length / 2)] : 0;
+  state.declaredMonthlyRevenue = filteredR0;
+
+  const calcNet = document.getElementById('parserCalculatedNet');
+  if (calcNet) calcNet.innerText = `${formatTwoDecimals(filteredTotalNet)} ${currencyCode}`;
+
+  const trailingMed = document.getElementById('parserTrailingMedian');
+  if (trailingMed) trailingMed.innerText = `${formatTwoDecimals(filteredR0)} ${currencyCode}`;
+
+  renderMonthlyBreakdownTable(filteredBreakdown);
+}
+
+function renderMonthlyBreakdownTable(listToRender) {
+  const tbody = document.getElementById('monthlyBreakdownTableBody');
+  if (!tbody) return;
+
+  function formatTwoDecimals(val) {
+    if (val === null || val === undefined || val === '') return '$0.00';
+    const cleanStr = String(val).replace(/[\$,\s]/g, '');
+    const n = parseFloat(cleanStr);
+    if (isNaN(n)) return '$0.00';
+    return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  if (!listToRender || listToRender.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--mt-fg-4);">No monthly breakdown available for selected tracks.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = listToRender.map(m => {
+    const monthName = m.month || 'Unknown';
+    const rawAmt = m.net_royalty !== undefined ? m.net_royalty : (m.earnings || m.amount || 0);
+    const exactAmountStr = formatTwoDecimals(rawAmt);
+    const topSource = m.primary_source || 'Streaming';
+    const momStr = m.mom_growth_pct !== null && m.mom_growth_pct !== undefined
+      ? (m.mom_growth_pct >= 0 ? `<span style="color:#34d399; font-weight:600;">+${m.mom_growth_pct}%</span>` : `<span style="color:#f87171; font-weight:600;">${m.mom_growth_pct}%</span>`)
+      : `<span style="color:var(--mt-fg-4);">Baseline</span>`;
+    const trackCountStr = m.track_count ? `${m.track_count} Track${m.track_count > 1 ? 's' : ''}` : '1 Track';
+
+    return `
+      <tr>
+        <td><strong>${escapeHtml(monthName)}</strong></td>
+        <td><strong style="color:#34d399; font-size:1.05rem;">${escapeHtml(exactAmountStr)}</strong></td>
+        <td>${momStr}</td>
+        <td><span style="color:#e2e8f0; font-size:0.85rem;">${escapeHtml(trackCountStr)}</span></td>
+        <td><code style="background:rgba(99,102,241,0.1); color:#a5b4fc; padding:3px 8px; border-radius:4px; font-size:0.8rem;">${escapeHtml(topSource)}</code></td>
+      </tr>
+    `;
+  }).join('');
 
   lucide.createIcons();
 }
@@ -1908,6 +2174,10 @@ async function executeValuation() {
     const rhoVal = (state.dealTerms.customRho && typeof state.dealTerms.customRho === 'number') ? state.dealTerms.customRho : 0.50;
     formData.append('rho', rhoVal);
 
+    if (state.selectedSongIds && state.selectedSongIds.size > 0) {
+      formData.append('included_songs_json', JSON.stringify(Array.from(state.selectedSongIds)));
+    }
+
     try {
       const res = await fetch('/api/valuation', {
         method: 'POST',
@@ -2014,6 +2284,28 @@ function calculateValuationClientSide() {
         monthly_history: history,
         dsp_breakdown: { "Spotify": Math.round(mRev * 7.2 * 100) / 100, "Apple Music": Math.round(mRev * 2.8 * 100) / 100 },
         dsp_shares: { "Spotify": 72.0, "Apple Music": 28.0 }
+      };
+    });
+  }
+
+  // Filter trackList by state.selectedSongIds if specified
+  if (state.selectedSongIds && state.selectedSongIds.size > 0 && trackList.length > 0) {
+    const filteredTracks = trackList.filter(t => state.selectedSongIds.has(t.identifier || t.isrc || t.title));
+    if (filteredTracks.length > 0) {
+      trackList = filteredTracks;
+    }
+  }
+
+  // Recalculate relative track shares among the selected tracks
+  const totalSelectedRev = trackList.reduce((acc, t) => acc + (t.monthly_rev || t.latest_month_rev || 0), 0);
+  if (totalSelectedRev > 0) {
+    trackList = trackList.map(t => {
+      const mRev = t.monthly_rev || t.latest_month_rev || 0;
+      const sh = mRev / totalSelectedRev;
+      return {
+        ...t,
+        share: sh,
+        share_pct: (sh * 100).toFixed(1)
       };
     });
   }
@@ -3244,4 +3536,21 @@ function openSongDrilldownModal(songIdentifier) {
 
 window.openSongDrilldownModal = openSongDrilldownModal;
 window.toggleSongDrilldownModal = toggleSongDrilldownModal;
+window.toggleSongFilterDropdown = toggleSongFilterDropdown;
+window.closeSongFilterDropdown = closeSongFilterDropdown;
+window.handleSongFilterSearch = handleSongFilterSearch;
+window.togglePendingSongSelection = togglePendingSongSelection;
+window.selectAllFilterSongs = selectAllFilterSongs;
+window.deselectAllFilterSongs = deselectAllFilterSongs;
+window.applySongFilterSelection = applySongFilterSelection;
+
+document.addEventListener('click', (e) => {
+  const popover = document.getElementById('songFilterPopover');
+  const btn = document.getElementById('songFilterBtn');
+  if (popover && popover.style.display !== 'none') {
+    if (!popover.contains(e.target) && !btn?.contains(e.target)) {
+      closeSongFilterDropdown();
+    }
+  }
+});
 

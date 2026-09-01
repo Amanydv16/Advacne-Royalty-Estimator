@@ -756,7 +756,8 @@ async def evaluate_statements(
     is_gross: bool = Form(False),
     distributor_fee_pct: Optional[float] = Form(None),
     r_win: int = Form(3),
-    payment_schedule_json: Optional[str] = Form(None)
+    payment_schedule_json: Optional[str] = Form(None),
+    included_songs_json: Optional[str] = Form(None)
 ):
     """
     Main Valuation Endpoint (Stage 5) - Advance Engine V3:
@@ -825,6 +826,21 @@ async def evaluate_statements(
                 status_code=400,
                 detail="No valid statement files uploaded or sample dataset selected. At least 6 months of statements are required."
             )
+
+    # 4. Filter by selected songs if included_songs_json is specified
+    if included_songs_json:
+        try:
+            included_list = json.loads(included_songs_json)
+            if included_list and isinstance(included_list, list) and len(included_list) > 0:
+                included_set = set(str(k).strip() for k in included_list)
+                filtered_rows = [
+                    r for r in raw_rows
+                    if (str(r.get("isrc", "")).strip() in included_set) or (str(r.get("title", "")).strip() in included_set)
+                ]
+                if filtered_rows:
+                    raw_rows = filtered_rows
+        except Exception as filter_err:
+            logger.warning(f"[Valuation Song Filter Warning]: {filter_err}")
 
     # Parse tranches if provided
     tranches = None

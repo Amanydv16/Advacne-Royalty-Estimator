@@ -274,12 +274,54 @@
                         Statement Breakdown & Month-wise Earnings
                       </h4>
                       <div style="display: flex; align-items: center; gap: 8px;">
+                        <!-- Filter by Songs Control -->
+                        <div class="song-filter-control-wrap" style="position: relative;">
+                          <button type="button" class="btn btn-secondary btn-sm" id="songFilterBtn" onclick="toggleSongFilterDropdown(event)"
+                            title="Select/deselect tracks to include in deal calculations">
+                            <i data-lucide="filter" style="width: 13px; height: 13px; color: var(--mt-red);"></i>
+                            <span>Filter by songs</span>
+                            <i data-lucide="chevron-down" style="width: 12px; height: 12px;"></i>
+                          </button>
+
+                          <!-- Popover Filter Menu -->
+                          <div class="song-filter-popover" id="songFilterPopover" style="display: none;" onclick="event.stopPropagation()">
+                            <div class="song-filter-header">
+                              <span class="song-filter-title">Filter by songs</span>
+                              <div class="song-filter-actions">
+                                <button type="button" class="song-filter-link-btn" onclick="selectAllFilterSongs()">Select all</button>
+                                <span style="color: var(--mt-fg-4);">•</span>
+                                <button type="button" class="song-filter-link-btn" onclick="deselectAllFilterSongs()">Deselect all</button>
+                              </div>
+                            </div>
+                            <div class="song-filter-search-wrap">
+                              <i data-lucide="search" style="width: 12px; height: 12px; color: var(--mt-fg-3);"></i>
+                              <input type="text" id="songFilterSearchInput" class="song-filter-search-input" placeholder="Search track or ISRC..." oninput="handleSongFilterSearch(this.value)">
+                            </div>
+                            <div class="song-filter-items-list" id="songFilterItemsContainer">
+                              <!-- Checkboxes populated via JS -->
+                            </div>
+                            <div class="song-filter-footer">
+                              <span class="song-filter-count-text" id="songFilterCountStatus">0 of 0 songs selected</span>
+                              <button type="button" class="btn btn-primary btn-sm" onclick="applySongFilterSelection()">Apply</button>
+                            </div>
+                          </div>
+                        </div>
+
                         <button class="btn btn-ghost btn-sm btn-clear-all" onclick="clearAllUploadedFiles()"
                           title="Clear all statement files from parser">
                           <i data-lucide="trash-2" style="width: 13px; height: 13px;"></i> Clear All Files
                         </button>
                         <span id="parserStatusBadge" class="pill"><span class="dot"></span> PARSED</span>
                       </div>
+                    </div>
+
+                    <!-- Song Filter Summary Banner (Active Selection Notice) -->
+                    <div id="songFilterSummaryBanner" style="display: none; background: rgba(216, 26, 55, 0.08); border: 1px solid rgba(216, 26, 55, 0.25); border-radius: 4px; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; display: flex; align-items: center; justify-content: space-between;">
+                      <div style="display: flex; align-items: center; gap: 8px; color: var(--mt-fg-1);">
+                        <i data-lucide="check-square" style="width: 14px; height: 14px; color: var(--mt-red);"></i>
+                        <span><strong id="songFilterActiveSummary">All songs selected</strong> — only selected tracks will be included in the advance.</span>
+                      </div>
+                      <button type="button" class="song-filter-link-btn" onclick="toggleSongFilterDropdown(event)" style="color: var(--mt-red); font-weight: 600;">Edit Filter</button>
                     </div>
 
                     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px;">
