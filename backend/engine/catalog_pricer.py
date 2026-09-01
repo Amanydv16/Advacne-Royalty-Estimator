@@ -30,6 +30,8 @@ class CatalogValuationResult:
         per_song_decay: List[Dict[str, Any]],
         d_age: Optional[float],
         d_stream: Optional[float],
+        dollar_age_years: float,
+        dollar_age_months: float,
         risk_discount: float,
         k_base: float,
         k_t: float,
@@ -61,6 +63,8 @@ class CatalogValuationResult:
         self.per_song_decay = per_song_decay
         self.d_age = d_age
         self.d_stream = d_stream
+        self.dollar_age_years = dollar_age_years
+        self.dollar_age_months = dollar_age_months
         self.risk_discount = risk_discount
         self.k_base = k_base
         self.k_t = k_t
@@ -401,14 +405,41 @@ def compute_catalog_advance(
     if decay_cov < 0.60:
         flags.append("LOW_DECAY_COVERAGE")
 
-    # Dollar age & streaming state (placeholders)
-    d_age = None
-    flags.append("NO_RELEASE_DATES")
-    d_stream = None
-    flags.append("NO_STREAMING_DATA")
+    # 2b. Dollar-Weighted Catalogue Age (Age_$) Computation
+    total_dollar_age_months = 0.0
+    latest_canonical_month = usable_months[-1] if usable_months else "2026-03"
+    try:
+        curr_y, curr_m = int(latest_canonical_month[:4]), int(latest_canonical_month[5:7])
+    except Exception:
+        curr_y, curr_m = 2026, 3
+
+    for s in per_song_decay:
+        s_share = s.get("share", 0.0)
+        hist = s.get("monthly_history", [])
+        active_m = [h["month"] for h in hist if h.get("earnings", 0) > 0]
+        earliest_m = active_m[0] if active_m else (usable_months[0] if usable_months else "2023-01")
+        
+        try:
+            ey, em = int(earliest_m[:4]), int(earliest_m[5:7])
+            # Historical months observed + 18 months baseline seasoning
+            age_mos = max(1, (curr_y - ey) * 12 + (curr_m - em) + 18)
+        except Exception:
+            age_mos = 45.0  # default ~3.75 years
+
+        total_dollar_age_months += s_share * age_mos
+
+    dollar_age_years = round(total_dollar_age_months / 12.0, 2) if total_dollar_age_months > 0 else 3.80
+    dollar_age_months = round(total_dollar_age_months, 1)
+
+    # d_age haircut: benchmark is 48 months (4.0 years).
+    w_age = cfg.get("W_AGE", 0.15)
+    if dollar_age_years >= 4.0:
+        d_age = 0.0
+    else:
+        d_age = round(w_age * max(0.0, (4.0 - dollar_age_years) / 4.0), 4)
 
     # Sum available risk indicators
-    available_risk_sum = d_conc + d_decay
+    available_risk_sum = d_conc + d_decay + (d_age or 0.0)
     term_sens_map = cfg.get("TERM_SENS", {1: 0.70, 2: 0.85, 3: 1.00, 5: 1.20})
     term_sens = term_sens_map.get(term, 1.0)
     
@@ -457,7 +488,9 @@ def compute_catalog_advance(
         decay_coverage=decay_cov,
         per_song_decay=per_song_decay,
         d_age=d_age,
-        d_stream=d_stream,
+        d_stream=None,
+        dollar_age_years=dollar_age_years,
+        dollar_age_months=dollar_age_months,
         risk_discount=risk_discount,
         k_base=k_base,
         k_t=k_t,

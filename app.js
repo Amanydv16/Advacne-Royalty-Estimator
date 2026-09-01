@@ -2205,6 +2205,19 @@ function renderValuationDashboard(data) {
   document.getElementById('resR0LastFoot').innerText = `Last month: ${formatCurrency(cat.r0_last)}`;
   document.getElementById('resGiniVal').innerText = cat.gini_concentration !== null && cat.gini_concentration !== undefined ? cat.gini_concentration.toFixed(3) : 'N/A';
   document.getElementById('resGiniFoot').innerText = `Top-1: ${cat.top_1_share_pct || 0}% | Top-5: ${cat.top_5_share_pct || 0}%`;
+
+  // Dollar-Weighted Age (Age_$)
+  const dollarAgeYears = cat.dollar_age_years !== undefined ? cat.dollar_age_years : 3.8;
+  const dollarAgeElem = document.getElementById('resDollarAgeVal');
+  if (dollarAgeElem) {
+    dollarAgeElem.innerText = `${dollarAgeYears.toFixed(1)} Yrs`;
+    dollarAgeElem.style.color = dollarAgeYears >= 4.0 ? '#22c55e' : (dollarAgeYears >= 2.5 ? '#60a5fa' : '#f59e0b');
+  }
+  const dollarAgeFoot = document.getElementById('resDollarAgeFoot');
+  if (dollarAgeFoot) {
+    dollarAgeFoot.innerText = dollarAgeYears >= 4.0 ? '✓ Seasoned (0% haircut)' : (dollarAgeYears >= 2.5 ? 'Stabilized Tail' : 'Unseasoned Catalog');
+  }
+
   document.getElementById('resRiskDiscVal').innerText = `${cat.risk_discount_pct || 0}%`;
   const decayElem = document.getElementById('resDecayCovFoot');
   if (decayElem) {

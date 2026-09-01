@@ -232,6 +232,8 @@ class ValuationEngine:
                 "d_conc_pct": round(catalog_res.d_conc * 100, 2),
                 "d_age_pct": round((catalog_res.d_age or 0.0) * 100, 2),
                 "d_stream_pct": round((catalog_res.d_stream or 0.0) * 100, 2),
+                "dollar_age_years": catalog_res.dollar_age_years,
+                "dollar_age_months": catalog_res.dollar_age_months,
                 "gini_raw": round(catalog_res.gini_raw, 3) if catalog_res.gini_raw is not None else None,
                 "gini_concentration": round(catalog_res.gini_star, 3) if catalog_res.gini_star is not None else None,
                 "k_base": round(catalog_res.k_base, 2),
